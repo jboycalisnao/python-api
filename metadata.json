@@ -1,0 +1,5 @@
+{
+  "name": "MCS Rainwater Dashboard",
+  "description": "An integrated engineering dashboard for Semi-Markov rainfall generation and school rainwater harvesting water-balance analysis, featuring professional-grade UI and drought indicator modeling.",
+  "requestFramePermissions": []
+}
