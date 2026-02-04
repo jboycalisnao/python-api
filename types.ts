@@ -5,6 +5,15 @@ export interface MonthlyParameters {
   p11: number; // Transition prob: Wet to Wet
   meanRain: number; // Mean rain depth on wet days (mm)
   stdDev: number; // Std dev for distribution
+  gamma_k?: number; // Shape parameter
+  gamma_theta?: number; // Scale parameter
+  avgDrySpell?: number; // Mean duration of dry spells (days)
+  avgWetSpell?: number; // Mean duration of wet spells (days)
+}
+
+export interface HistoricalRecord {
+  date: string;
+  rain_mm: number;
 }
 
 export interface RainfallDataRow {
@@ -32,14 +41,34 @@ export interface WaterBalanceConfig {
 export interface ReliabilityResult {
   tankSize: number;
   reliability: number; // Percentage
-  droughtDays: number;
-  totalInflow: number;
-  totalDemand: number;
+  droughtDays?: number;
+  totalInflow?: number;
+  totalDemand?: number;
+}
+
+export interface SimulationReportJSON {
+  metadata: {
+    roof_area_per_class_m2: number;
+    number_of_classrooms: number;
+    students_per_class: number;
+    demand_L_per_student_per_day: number;
+    simulation_years: number;
+  };
+  harvest_summary: {
+    annual_L: number;
+    monthly_L: Record<string, number>;
+    weekly_L: Record<string, number>;
+  };
+  reliability_table: {
+    tank_L: Record<string, number>;
+    reliability_pct: Record<string, number>;
+  };
+  generated_at: string;
 }
 
 export interface MonthlySummary {
-  month: number;
-  avgRain: number;
+  month: string;
+  avgRain?: number;
   avgInflow: number;
-  avgReliability: number;
+  count?: number;
 }

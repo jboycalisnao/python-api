@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   CloudRain, 
   Droplets, 
@@ -9,7 +9,17 @@ import {
   Play, 
   Info,
   ChevronRight,
-  Calculator
+  Calculator,
+  Upload,
+  FileJson,
+  AlertCircle,
+  TrendingUp,
+  MapPin,
+  RefreshCw,
+  ArrowRightLeft,
+  Pause,
+  FastForward,
+  Sparkles
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Legend 
@@ -17,18 +27,30 @@ import {
 
 import { RainfallEngine } from './services/rainfallEngine';
 import { WaterBalanceEngine } from './services/waterBalanceEngine';
-import { DEFAULT_MONTHLY_PARAMS, COLORS, MONTH_NAMES } from './constants';
-import { RainfallDataRow, InflowConfig, WaterBalanceConfig, ReliabilityResult } from './types';
+import { DEFAULT_MONTHLY_PARAMS, MONTH_NAMES } from './constants';
+import { RainfallDataRow, InflowConfig, WaterBalanceConfig, ReliabilityResult, SimulationReportJSON, MonthlySummary, MonthlyParameters } from './types';
 import ModuleCard from './components/ModuleCard';
+import HistoricalAnalysisModule from './components/analysis/HistoricalAnalysisModule';
+import ClimateComparisonModule from './components/analysis/ClimateComparisonModule';
+import RoofHarvestVisualizer from './components/visuals/RoofHarvestVisualizer';
+import AIInsightsModule from './components/analysis/AIInsightsModule';
 
 const App: React.FC = () => {
-  // State: Rainfall Generation
+  // State: Source Mode
+  const [viewMode, setViewMode] = useState<'live' | 'report'>('live');
+  const [sidebarTab, setSidebarTab] = useState<'calibrate' | 'compare'>('calibrate');
+  const [reportData, setReportData] = useState<SimulationReportJSON | null>(null);
+
+  // State: Parameters (Defaults vs Historical Extracted)
+  const [activeParams, setActiveParams] = useState<MonthlyParameters[]>(DEFAULT_MONTHLY_PARAMS);
+
+  // State: Rainfall Generation (Live)
   const [genYears, setGenYears] = useState(10);
   const [genSeed, setGenSeed] = useState(42);
   const [rainfallData, setRainfallData] = useState<RainfallDataRow[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // State: Harvesting Config
+  // State: Harvesting Config (Live)
   const [inflowConfig, setInflowConfig] = useState<InflowConfig>({
     roofAreaPerClassroom: 60,
     numberOfClassrooms: 10,
@@ -37,49 +59,72 @@ const App: React.FC = () => {
     firstFlushLoss: 0.5
   });
 
-  // State: Water Balance
+  // State: Simulation Playback
+  const [currentDayIndex, setCurrentDayIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const simulationTimerRef = useRef<number | null>(null);
+
+  // State: Water Balance (Live)
   const [wbConfig, setWbConfig] = useState<Omit<WaterBalanceConfig, 'tankCapacity'>>({
     studentCount: 500,
-    dailyDemandPerStudent: 2 // Liters for drinking/handwashing
+    dailyDemandPerStudent: 2
   });
 
   const [simulationResults, setSimulationResults] = useState<ReliabilityResult[]>([]);
   const [selectedTankSize, setSelectedTankSize] = useState(10000);
 
-  // Derived Data: Monthly Summary for Chart
-  const monthlyInflowData = useMemo(() => {
-    if (rainfallData.length === 0) return [];
-    
-    const inflowData = WaterBalanceEngine.calculateInflow(rainfallData, inflowConfig);
-    const summary = Array.from({ length: 12 }, (_, i) => ({
-      month: MONTH_NAMES[i],
-      rainfall: 0,
-      inflow: 0,
-      count: 0
-    }));
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-    inflowData.forEach(d => {
-      const idx = d.month - 1;
-      summary[idx].rainfall += d.rain_mm;
-      summary[idx].inflow += d.inflow_liters;
-      summary[idx].count++;
-    });
+  // --- ACTIONS ---
 
-    return summary.map(s => ({
-      ...s,
-      avgRain: parseFloat((s.rainfall / (rainfallData.length / 365)).toFixed(2)),
-      avgInflow: parseFloat((s.inflow / (rainfallData.length / 365)).toFixed(2))
-    }));
-  }, [rainfallData, inflowConfig]);
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const json = JSON.parse(e.target?.result as string) as SimulationReportJSON;
+        if (json.metadata && json.harvest_summary && json.reliability_table) {
+          setReportData(json);
+          setViewMode('report');
+        } else {
+          alert("Invalid JSON structure.");
+        }
+      } catch (err) {
+        alert("Error parsing JSON file.");
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const handleGenerateRainfall = () => {
+    setViewMode('live');
     setIsGenerating(true);
+    setIsPlaying(false);
     setTimeout(() => {
-      const data = RainfallEngine.generate(DEFAULT_MONTHLY_PARAMS, genYears, genSeed);
+      const data = RainfallEngine.generate(activeParams, genYears, genSeed);
       setRainfallData(data);
+      setCurrentDayIndex(0);
       setIsGenerating(false);
     }, 600);
   };
+
+  const togglePlayback = () => {
+    if (rainfallData.length === 0) return;
+    setIsPlaying(!isPlaying);
+  };
+
+  useEffect(() => {
+    if (isPlaying && rainfallData.length > 0) {
+      simulationTimerRef.current = window.setInterval(() => {
+        setCurrentDayIndex(prev => (prev + 1) % rainfallData.length);
+      }, 100);
+    } else {
+      if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
+    }
+    return () => { if (simulationTimerRef.current) clearInterval(simulationTimerRef.current); };
+  }, [isPlaying, rainfallData]);
 
   const handleRunAnalysis = () => {
     if (rainfallData.length === 0) return;
@@ -88,26 +133,63 @@ const App: React.FC = () => {
     setSimulationResults(scan);
   };
 
+  // --- DATA PROCESSING ---
+
+  const currentDayData = useMemo(() => {
+    if (!rainfallData[currentDayIndex]) return null;
+    return rainfallData[currentDayIndex];
+  }, [rainfallData, currentDayIndex]);
+
+  const processedReportData = useMemo(() => {
+    if (!reportData) return null;
+    const monthly: MonthlySummary[] = Object.entries(reportData.harvest_summary.monthly_L)
+      .map(([key, val]) => ({ 
+        month: MONTH_NAMES[parseInt(key) - 1], 
+        avgInflow: val as number 
+      }));
+    const reliability: ReliabilityResult[] = Object.keys(reportData.reliability_table.tank_L)
+      .map(idx => ({ 
+        tankSize: reportData.reliability_table.tank_L[idx] as number, 
+        reliability: reportData.reliability_table.reliability_pct[idx] as number 
+      }))
+      .sort((a, b) => a.tankSize - b.tankSize);
+    const driestMonth = monthly.reduce((p, c) => p.avgInflow < c.avgInflow ? p : c);
+    const recommendedTank = reliability.find(r => r.reliability >= 90);
+    return { monthly, reliability, driestMonth, recommendedTank };
+  }, [reportData]);
+
+  const liveChartData = useMemo(() => {
+    if (rainfallData.length === 0) return [];
+    const inflowData = WaterBalanceEngine.calculateInflow(rainfallData, inflowConfig);
+    const summary = Array.from({ length: 12 }, (_, i) => ({ month: MONTH_NAMES[i], rainfall: 0, inflow: 0 }));
+    inflowData.forEach(d => {
+      const idx = d.month - 1;
+      summary[idx].rainfall += d.rain_mm;
+      summary[idx].inflow += d.inflow_liters;
+    });
+    const years = rainfallData.length / 365;
+    return summary.map(s => ({ month: s.month, avgRain: parseFloat((s.rainfall / years).toFixed(2)), avgInflow: parseFloat((s.inflow / years).toFixed(2)) }));
+  }, [rainfallData, inflowConfig]);
+
   const currentReliability = useMemo(() => {
-    if (simulationResults.length === 0) return null;
-    // Find closest result to selectedTankSize
-    return simulationResults.reduce((prev, curr) => 
-      Math.abs(curr.tankSize - selectedTankSize) < Math.abs(prev.tankSize - selectedTankSize) ? curr : prev
-    );
-  }, [simulationResults, selectedTankSize]);
+    const list = viewMode === 'report' ? processedReportData?.reliability : simulationResults;
+    if (!list || list.length === 0) return null;
+    return list.reduce((prev, curr) => Math.abs(curr.tankSize - selectedTankSize) < Math.abs(prev.tankSize - selectedTankSize) ? curr : prev);
+  }, [simulationResults, selectedTankSize, viewMode, processedReportData]);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
-      {/* Header */}
       <header className="bg-[#010e5b] text-white shadow-lg sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Calculator className="w-8 h-8 text-white" />
             <h1 className="text-xl font-bold tracking-tight">MCS <span className="font-light opacity-80">| Rainwater Harvesting Dashboard</span></h1>
           </div>
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
-            <a href="#" className="hover:text-red-400 transition-colors">Documentation</a>
-            <a href="#" className="hover:text-red-400 transition-colors">Methodology</a>
+          <nav className="hidden md:flex items-center gap-4 text-sm font-medium">
+            <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+            <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-md transition-colors">
+              <Upload size={16} /> Import JSON
+            </button>
             <button className="bg-[#ca080b] px-4 py-2 rounded-md hover:bg-red-700 transition-colors shadow-sm font-semibold">
               Export Report
             </button>
@@ -115,285 +197,223 @@ const App: React.FC = () => {
         </div>
       </header>
 
+      {viewMode === 'report' && reportData && (
+        <div className="bg-white border-b border-slate-200 py-3 shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 flex items-center justify-between">
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wider border-r border-slate-200 pr-6">
+                <FileJson size={14} className="text-blue-600" />
+                Report: {new Date(reportData.generated_at).toLocaleDateString()}
+              </div>
+              <div className="flex gap-6 text-sm text-slate-600">
+                <span><MapPin size={14} className="inline opacity-40 mr-1" /> {reportData.metadata.number_of_classrooms} Classrooms</span>
+                <span><TrendingUp size={14} className="inline opacity-40 mr-1" /> {reportData.metadata.roof_area_per_class_m2} m²</span>
+                <span className="font-medium text-primary">Demand: {reportData.metadata.demand_L_per_student_per_day} L/student</span>
+              </div>
+            </div>
+            <button onClick={() => setViewMode('live')} className="text-xs font-bold text-secondary hover:underline">
+              Back to Simulation
+            </button>
+          </div>
+        </div>
+      )}
+
       <main className="max-w-7xl mx-auto px-4 mt-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* Sidebar Configuration */}
         <div className="lg:col-span-4 space-y-6">
           
-          <ModuleCard title="Rainfall Generation" icon={<CloudRain size={20}/>} step={1}>
+          <ModuleCard title="Climate Calibration" icon={<RefreshCw size={20}/>} step={1}>
+            <div className="flex p-1 bg-slate-100 rounded-lg mb-4">
+              <button 
+                onClick={() => setSidebarTab('calibrate')}
+                className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${sidebarTab === 'calibrate' ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}
+              >
+                <RefreshCw size={12} /> Calibration
+              </button>
+              <button 
+                onClick={() => setSidebarTab('compare')}
+                className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${sidebarTab === 'compare' ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}
+              >
+                <ArrowRightLeft size={12} /> Comparison
+              </button>
+            </div>
+            
+            {sidebarTab === 'calibrate' ? (
+              <HistoricalAnalysisModule onParametersExtracted={setActiveParams} />
+            ) : (
+              <ClimateComparisonModule />
+            )}
+          </ModuleCard>
+
+          <ModuleCard title="Rainfall Generation" icon={<CloudRain size={20}/>} step={2}>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Synthetic Duration (Years)</label>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Duration (Years)</label>
                 <input 
                   type="number" 
-                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-1 focus:ring-[#010e5b] outline-none" 
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" 
                   value={genYears} 
                   onChange={(e) => setGenYears(parseInt(e.target.value))}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Random Seed</label>
-                <input 
-                  type="number" 
-                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-1 focus:ring-[#010e5b] outline-none" 
-                  value={genSeed} 
-                  onChange={(e) => setGenSeed(parseInt(e.target.value))}
                 />
               </div>
               <button 
                 onClick={handleGenerateRainfall}
                 disabled={isGenerating}
-                className="w-full bg-[#010e5b] text-white py-2 rounded-md hover:bg-opacity-90 transition-all flex items-center justify-center gap-2 font-medium disabled:bg-slate-300"
+                className={`w-full text-white py-2 rounded-md transition-all flex items-center justify-center gap-2 font-medium ${viewMode === 'live' ? 'bg-[#010e5b]' : 'bg-slate-400'}`}
               >
-                {isGenerating ? "Generating..." : <><Play size={16} /> Generate Time Series</>}
+                {isGenerating ? "Generating..." : <><Play size={16} /> Run Synthetic Loop</>}
               </button>
-              {rainfallData.length > 0 && (
-                <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-2">
-                  <Info size={12} /> Successfully generated {rainfallData.length} records.
-                </div>
-              )}
             </div>
           </ModuleCard>
 
-          <ModuleCard title="Inflow Configuration" icon={<Droplets size={20}/>} step={2}>
+          <ModuleCard title="Infrastructure" icon={<Droplets size={20}/>} step={3}>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Classrooms</label>
-                  <input 
-                    type="number" 
-                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" 
-                    value={inflowConfig.numberOfClassrooms} 
-                    onChange={(e) => setInflowConfig({...inflowConfig, numberOfClassrooms: parseInt(e.target.value)})}
-                  />
+                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Classes</label>
+                  <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.numberOfClassrooms} onChange={(e) => setInflowConfig({...inflowConfig, numberOfClassrooms: parseInt(e.target.value)})} />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Roof/Class (m²)</label>
-                  <input 
-                    type="number" 
-                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" 
-                    value={inflowConfig.roofAreaPerClassroom} 
-                    onChange={(e) => setInflowConfig({...inflowConfig, roofAreaPerClassroom: parseInt(e.target.value)})}
-                  />
+                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Roof/m²</label>
+                  <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.roofAreaPerClassroom} onChange={(e) => setInflowConfig({...inflowConfig, roofAreaPerClassroom: parseInt(e.target.value)})} />
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Runoff Coeff (0-1)</label>
-                <input 
-                  type="range" min="0" max="1" step="0.05"
-                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#010e5b]" 
-                  value={inflowConfig.runoffCoefficient} 
-                  onChange={(e) => setInflowConfig({...inflowConfig, runoffCoefficient: parseFloat(e.target.value)})}
-                />
-                <div className="text-right text-xs text-slate-500">{inflowConfig.runoffCoefficient}</div>
+                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Daily Demand (L/Student)</label>
+                <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={wbConfig.dailyDemandPerStudent} onChange={(e) => setWbConfig({...wbConfig, dailyDemandPerStudent: parseInt(e.target.value)})} />
               </div>
-              <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">First Flush (mm)</label>
-                <input 
-                  type="number" step="0.1"
-                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" 
-                  value={inflowConfig.firstFlushLoss} 
-                  onChange={(e) => setInflowConfig({...inflowConfig, firstFlushLoss: parseFloat(e.target.value)})}
-                />
-              </div>
-            </div>
-          </ModuleCard>
-
-          <ModuleCard title="Water Demand" icon={<Settings2 size={20}/>} step={3}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Total Students</label>
-                <input 
-                  type="number" 
-                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" 
-                  value={wbConfig.studentCount} 
-                  onChange={(e) => setWbConfig({...wbConfig, studentCount: parseInt(e.target.value)})}
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Liters / Student / Day</label>
-                <input 
-                  type="number" 
-                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" 
-                  value={wbConfig.dailyDemandPerStudent} 
-                  onChange={(e) => setWbConfig({...wbConfig, dailyDemandPerStudent: parseInt(e.target.value)})}
-                />
-              </div>
-              <button 
-                onClick={handleRunAnalysis}
-                disabled={rainfallData.length === 0}
-                className="w-full bg-[#ca080b] text-white py-2 rounded-md hover:bg-opacity-90 transition-all flex items-center justify-center gap-2 font-medium disabled:bg-slate-300"
-              >
-                <BarChart3 size={16} /> Scan Tank Capacities
+              <button onClick={handleRunAnalysis} disabled={viewMode === 'report' || rainfallData.length === 0} className="w-full bg-[#ca080b] text-white py-2 rounded-md font-medium disabled:bg-slate-300">
+                <BarChart3 size={16} className="inline mr-2" /> Run Water Balance
               </button>
             </div>
           </ModuleCard>
 
+          {/* AI Insights Module in Sidebar for consistent layout */}
+          <AIInsightsModule 
+            inflowConfig={inflowConfig}
+            wbConfig={wbConfig}
+            monthlySummary={viewMode === 'report' ? (processedReportData?.monthly || []) : liveChartData}
+            reliabilityData={viewMode === 'report' ? (processedReportData?.reliability || []) : simulationResults}
+            selectedTankSize={selectedTankSize}
+          />
         </div>
 
         {/* Results Area */}
         <div className="lg:col-span-8 space-y-6">
-          
-          {/* Main Visualizer */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 min-h-[400px]">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-xl font-bold text-slate-800">System Performance Analysis</h3>
-                <p className="text-sm text-slate-500">Long-term synthetic trends and harvestable inflow potential.</p>
-              </div>
+          {/* NEW VISUALIZER CARD */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-slate-800">System Dynamic Visualization</h3>
               <div className="flex gap-2">
-                <button className="p-2 border border-slate-200 rounded-md hover:bg-slate-50"><Download size={16} /></button>
+                <button 
+                  onClick={togglePlayback}
+                  disabled={rainfallData.length === 0}
+                  className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 disabled:opacity-50 text-slate-600 transition-colors"
+                  title={isPlaying ? "Pause Simulation" : "Play Simulation"}
+                >
+                  {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+                </button>
+                <button 
+                  onClick={() => setCurrentDayIndex(prev => (prev + 30) % Math.max(1, rainfallData.length))}
+                  disabled={rainfallData.length === 0}
+                  className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 disabled:opacity-50 text-slate-600 transition-colors"
+                  title="Forward 30 Days"
+                >
+                  <FastForward size={18} />
+                </button>
               </div>
             </div>
+            
+            <RoofHarvestVisualizer 
+              rainIntensity={currentDayData?.rain_mm || 0}
+              roofArea={inflowConfig.roofAreaPerClassroom}
+              efficiency={inflowConfig.runoffCoefficient * inflowConfig.gutterEfficiency}
+              currentMonth={currentDayData ? MONTH_NAMES[currentDayData.month-1] : 'No Loop Active'}
+              isSimulating={isPlaying}
+            />
 
-            {rainfallData.length === 0 ? (
-              <div className="h-64 flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-slate-100 rounded-xl">
-                <CloudRain size={48} className="mb-2 opacity-20" />
-                <p>Generate rainfall data to view trends</p>
+            <div className="mt-4 flex items-center justify-between">
+              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                Simulation Day: <span className="text-slate-700">{currentDayIndex + 1} / {rainfallData.length}</span>
               </div>
-            ) : (
-              <div className="space-y-8">
-                {/* Monthly Rainfall/Inflow Chart */}
-                <div className="h-72">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase mb-4">Monthly Hydrological Regime</h4>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={monthlyInflowData}>
-                      <defs>
-                        <linearGradient id="colorInflow" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#010e5b" stopOpacity={0.1}/>
-                          <stop offset="95%" stopColor="#010e5b" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="month" fontSize={10} axisLine={false} tickLine={false} />
-                      <YAxis fontSize={10} axisLine={false} tickLine={false} />
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                      />
-                      <Legend verticalAlign="top" height={36} iconType="circle"/>
-                      <Area type="monotone" dataKey="avgInflow" name="Average Inflow (L)" stroke="#010e5b" fillOpacity={1} fill="url(#colorInflow)" strokeWidth={2} />
-                      <Line type="monotone" dataKey="avgRain" name="Rainfall (mm)" stroke="#ca080b" dot={false} strokeWidth={2} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
+              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                Year: <span className="text-slate-700">{currentDayData?.synthetic_year || 0}</span>
+              </div>
+            </div>
+          </div>
 
-                {/* Reliability Curve */}
-                {simulationResults.length > 0 && (
-                  <div className="h-72 pt-8 border-t border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-4">Reliability vs. Tank Capacity</h4>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={simulationResults}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="tankSize" fontSize={10} axisLine={false} tickLine={false} label={{ value: 'Capacity (Liters)', position: 'insideBottom', offset: -5, fontSize: 10 }} />
-                        <YAxis fontSize={10} axisLine={false} tickLine={false} domain={[0, 100]} label={{ value: 'Reliability (%)', angle: -90, position: 'insideLeft', fontSize: 10 }} />
-                        <Tooltip />
-                        <Line type="monotone" dataKey="reliability" name="Reliability (%)" stroke="#ca080b" strokeWidth={3} dot={{ fill: '#ca080b', r: 3 }} activeDot={{ r: 6 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">{viewMode === 'report' ? 'Static Report View' : 'Live Hydrograph'}</h3>
+                <p className="text-xs text-slate-500">Visualizing climate patterns and harvesting performance.</p>
+              </div>
+              {currentReliability && (
+                <div className="text-right">
+                  <div className="text-xs font-bold text-slate-400 uppercase">Current Reliability</div>
+                  <div className="text-2xl font-black text-secondary">{currentReliability.reliability.toFixed(1)}%</div>
+                </div>
+              )}
+            </div>
+
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={viewMode === 'report' ? processedReportData?.monthly : liveChartData}>
+                  <defs>
+                    <linearGradient id="colorInflow" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#010e5b" stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor="#010e5b" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="month" fontSize={10} axisLine={false} tickLine={false} />
+                  <YAxis fontSize={10} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                  <Area type="monotone" dataKey="avgInflow" name="Harvested (L)" stroke="#010e5b" fillOpacity={1} fill="url(#colorInflow)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+
+            {(simulationResults.length > 0 || (viewMode === 'report' && processedReportData?.reliability.length)) && (
+              <div className="h-64 mt-10 pt-10 border-t border-slate-100">
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-4 tracking-widest">Reliability Scan (Liters vs %)</h4>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={viewMode === 'report' ? processedReportData?.reliability : simulationResults}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="tankSize" fontSize={9} axisLine={false} tickLine={false} />
+                    <YAxis fontSize={9} axisLine={false} tickLine={false} domain={[0, 100]} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="reliability" stroke="#ca080b" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
               </div>
             )}
           </div>
 
-          {/* Key Metrics Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-              <div className="text-slate-500 text-xs font-bold uppercase mb-2">Annual Mean Inflow</div>
-              <div className="text-2xl font-bold text-primary">
-                {monthlyInflowData.length > 0 ? (monthlyInflowData.reduce((acc, v) => acc + v.avgInflow, 0) / 1000).toFixed(1) : 0} m³
-              </div>
-              <div className="text-[10px] text-slate-400 mt-1">Based on roof area and generation parameters</div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
+               <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-primary"><Droplets size={20}/></div>
+               <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">Ann. Harvest</div>
+                  <div className="text-lg font-bold">{(viewMode === 'report' ? (processedReportData?.monthly.reduce((a,b) => a + b.avgInflow, 0) || 0)/1000 : (liveChartData.reduce((a,b) => a + b.avgInflow, 0)/1000)).toFixed(1)} m³</div>
+               </div>
             </div>
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-              <div className="text-slate-500 text-xs font-bold uppercase mb-2">Target Reliability</div>
-              <div className="text-2xl font-bold text-secondary">
-                {currentReliability ? currentReliability.reliability.toFixed(1) : 0}%
-              </div>
-              <div className="flex items-center gap-1 mt-2">
-                 <input 
-                  type="range" min="1000" max="50000" step="1000"
-                  className="w-full h-1 bg-slate-200 rounded-lg cursor-pointer accent-secondary" 
-                  value={selectedTankSize} 
-                  onChange={(e) => setSelectedTankSize(parseInt(e.target.value))}
-                />
-                <span className="text-[10px] text-slate-400 whitespace-nowrap">{selectedTankSize/1000}kL</span>
-              </div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
+               <div className="w-10 h-10 bg-red-50 rounded-lg flex items-center justify-center text-secondary"><AlertCircle size={20}/></div>
+               <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">Driest Month</div>
+                  <div className="text-lg font-bold">{processedReportData?.driestMonth.month || liveChartData.reduce((p, c) => p.avgInflow < c.avgInflow ? p : c, {month: '...', avgInflow: Infinity}).month}</div>
+               </div>
             </div>
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-              <div className="text-slate-500 text-xs font-bold uppercase mb-2">Drought Indicator</div>
-              <div className="text-2xl font-bold text-slate-700">
-                {currentReliability ? Math.round(currentReliability.droughtDays / genYears) : 0}
-              </div>
-              <div className="text-[10px] text-slate-400 mt-1">Avg. dry days per year with tank empty</div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+               <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Adjust Capacity</div>
+               <input type="range" min="1000" max="50000" step="1000" className="w-full h-1 bg-slate-200 rounded-lg cursor-pointer accent-primary" value={selectedTankSize} onChange={(e) => setSelectedTankSize(parseInt(e.target.value))} />
+               <div className="text-[10px] text-primary font-bold text-right mt-1">{selectedTankSize/1000} kL</div>
             </div>
           </div>
-
-          {/* Summary Table */}
-          {rainfallData.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-                <h3 className="font-bold text-slate-800">Monthly Water Balance Summary</h3>
-                <button className="text-xs text-[#010e5b] font-semibold flex items-center gap-1">
-                  View Full CSV <ChevronRight size={14} />
-                </button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase">
-                    <tr>
-                      <th className="px-6 py-3">Month</th>
-                      <th className="px-6 py-3">Rainfall (mm)</th>
-                      <th className="px-6 py-3">Inflow (L)</th>
-                      <th className="px-6 py-3">Demand (L)</th>
-                      <th className="px-6 py-3">Deficit Probability</th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-sm divide-y divide-slate-100">
-                    {monthlyInflowData.map((m, i) => {
-                      const demand = wbConfig.studentCount * wbConfig.dailyDemandPerStudent * 30.4;
-                      const deficit = Math.max(0, demand - m.avgInflow);
-                      const prob = (deficit / demand * 100).toFixed(0);
-                      
-                      return (
-                        <tr key={i} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-6 py-3 font-medium">{m.month}</td>
-                          <td className="px-6 py-3 text-slate-600">{m.avgRain.toLocaleString()}</td>
-                          <td className="px-6 py-3 text-slate-600">{m.avgInflow.toLocaleString()}</td>
-                          <td className="px-6 py-3 text-slate-600">{demand.toLocaleString()}</td>
-                          <td className="px-6 py-3">
-                            <div className="flex items-center gap-2">
-                              <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                <div 
-                                  className="h-full bg-[#ca080b]" 
-                                  style={{ width: `${Math.min(100, parseInt(prob))}%` }}
-                                />
-                              </div>
-                              <span className="text-[10px] font-bold text-slate-400">{prob}%</span>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
       </main>
-
-      {/* Footer Info */}
-      <footer className="max-w-7xl mx-auto px-4 mt-12 pt-8 border-t border-slate-200">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-slate-400 text-xs">
-          <p>© 2024 MCS Research Program. All rights reserved.</p>
-          <div className="flex gap-6">
-            <a href="#" className="hover:text-slate-600 underline">Privacy Policy</a>
-            <a href="#" className="hover:text-slate-600 underline">Terms of Use</a>
-            <a href="#" className="hover:text-slate-600 underline">Contact Engineering Support</a>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 };

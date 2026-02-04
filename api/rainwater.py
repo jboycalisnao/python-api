@@ -22,11 +22,9 @@ Dependencies:
 
 import io
 
-import importlib
-import importlib.util
-
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from scipy import stats
 
@@ -43,16 +41,6 @@ SCENARIO_COLORS = {"Low":"#2ecc71", "Baseline":"#3498db", "High":"#e74c3c"}
 # ═══════════════════════════════════════════════
 # SHARED HELPERS
 # ═══════════════════════════════════════════════
-def _get_plotly_go():
-    if importlib.util.find_spec("plotly.graph_objects") is None:
-        return None
-    return importlib.import_module("plotly.graph_objects")
-
-
-def _warn_plotly_missing():
-    st.warning("Plotly is not installed. Install `plotly` to view charts.")
-
-
 def day_to_month(doy: int):
     """Day-of-year → (month 1-12, day-in-month)."""
     rem = doy
@@ -321,21 +309,17 @@ def _show_generation_results():
 
     # ── monthly mean chart ──
     monthly_mean = result_df.groupby("month")["rain_mm"].mean().reindex(range(1,13)).fillna(0)
-    go = _get_plotly_go()
-    if go is None:
-        _warn_plotly_missing()
-    else:
-        fig = go.Figure(data=[go.Bar(
-            x=MONTH_LABELS, y=monthly_mean.values,
-            marker_color="#4c9be8",
-            text=[f"{v:.2f}" for v in monthly_mean.values],
-            textposition="outside",
-        )])
-        fig.update_layout(
-            yaxis_title="Mean Rain (mm)", xaxis_title="Month",
-            height=300, margin=dict(t=25, b=35, l=45, r=25), template="plotly_white",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    fig = go.Figure(data=[go.Bar(
+        x=MONTH_LABELS, y=monthly_mean.values,
+        marker_color="#4c9be8",
+        text=[f"{v:.2f}" for v in monthly_mean.values],
+        textposition="outside",
+    )])
+    fig.update_layout(
+        yaxis_title="Mean Rain (mm)", xaxis_title="Month",
+        height=300, margin=dict(t=25, b=35, l=45, r=25), template="plotly_white",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
     # ── sample rows ──
     with st.expander("🔍 Sample rows (first 500)", expanded=False):
@@ -443,21 +427,17 @@ def tab_inflow():
 
     # ── monthly harvest chart ──
     st.subheader("📅 Monthly Mean Harvest")
-    go = _get_plotly_go()
-    if go is None:
-        _warn_plotly_missing()
-    else:
-        fig_m = go.Figure(data=[go.Bar(
-            x=month_df["month_label"], y=month_df["mean_L"],
-            marker_color="#4c9be8",
-            text=[f"{v:,.0f}" for v in month_df["mean_L"]],
-            textposition="outside",
-        )])
-        fig_m.update_layout(
-            yaxis_title="Mean Harvest (L)", xaxis_title="Month",
-            height=300, margin=dict(t=25, b=35, l=50, r=25), template="plotly_white",
-        )
-        st.plotly_chart(fig_m, use_container_width=True)
+    fig_m = go.Figure(data=[go.Bar(
+        x=month_df["month_label"], y=month_df["mean_L"],
+        marker_color="#4c9be8",
+        text=[f"{v:,.0f}" for v in month_df["mean_L"]],
+        textposition="outside",
+    )])
+    fig_m.update_layout(
+        yaxis_title="Mean Harvest (L)", xaxis_title="Month",
+        height=300, margin=dict(t=25, b=35, l=50, r=25), template="plotly_white",
+    )
+    st.plotly_chart(fig_m, use_container_width=True)
 
     with st.expander("📋 Monthly summary table", expanded=False):
         st.dataframe(month_df, use_container_width=True, hide_index=True)
@@ -510,37 +490,33 @@ def tab_inflow():
 
     # ── reliability curve ──
     st.subheader("📈 Reliability vs Tank Size")
-    go = _get_plotly_go()
-    if go is None:
-        _warn_plotly_missing()
-    else:
-        fig_r = go.Figure()
-        for scen in ("Low", "Baseline", "High"):
-            sub = wb_df[wb_df["scenario"] == scen].sort_values("tank_L")
-            fig_r.add_trace(go.Scatter(
-                x=sub["tank_L"], y=sub["reliability_pct"],
-                mode="lines", name=scen,
-                line=dict(color=SCENARIO_COLORS[scen], width=2.5),
-            ))
+    fig_r = go.Figure()
+    for scen in ("Low", "Baseline", "High"):
+        sub = wb_df[wb_df["scenario"] == scen].sort_values("tank_L")
+        fig_r.add_trace(go.Scatter(
+            x=sub["tank_L"], y=sub["reliability_pct"],
+            mode="lines", name=scen,
+            line=dict(color=SCENARIO_COLORS[scen], width=2.5),
+        ))
 
-        fig_r.add_shape(type="line", x0=tank_min, x1=tank_max, y0=90, y1=90,
-                        line=dict(color="gray", width=1.5, dash="dash"))
-        fig_r.add_annotation(x=tank_max, y=91, text="90 % target",
-                             showarrow=False, font=dict(color="gray", size=11), xanchor="right")
+    fig_r.add_shape(type="line", x0=tank_min, x1=tank_max, y0=90, y1=90,
+                    line=dict(color="gray", width=1.5, dash="dash"))
+    fig_r.add_annotation(x=tank_max, y=91, text="90 % target",
+                         showarrow=False, font=dict(color="gray", size=11), xanchor="right")
 
-        if rec_tank:
-            fig_r.add_shape(type="line", x0=rec_tank, x1=rec_tank, y0=0, y1=100,
-                            line=dict(color="#e67e22", width=1.5, dash="dot"))
-            fig_r.add_annotation(x=rec_tank, y=3, text=f"Rec: {rec_tank:,} L",
-                                 showarrow=False, font=dict(color="#e67e22", size=11), xanchor="center")
+    if rec_tank:
+        fig_r.add_shape(type="line", x0=rec_tank, x1=rec_tank, y0=0, y1=100,
+                        line=dict(color="#e67e22", width=1.5, dash="dot"))
+        fig_r.add_annotation(x=rec_tank, y=3, text=f"Rec: {rec_tank:,} L",
+                             showarrow=False, font=dict(color="#e67e22", size=11), xanchor="center")
 
-        fig_r.update_layout(
-            xaxis_title="Tank Size (L)", yaxis_title="Reliability (%)",
-            yaxis=dict(range=[0, 105]), height=380,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-            margin=dict(t=40, b=40, l=50, r=30), template="plotly_white",
-        )
-        st.plotly_chart(fig_r, use_container_width=True)
+    fig_r.update_layout(
+        xaxis_title="Tank Size (L)", yaxis_title="Reliability (%)",
+        yaxis=dict(range=[0, 105]), height=380,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        margin=dict(t=40, b=40, l=50, r=30), template="plotly_white",
+    )
+    st.plotly_chart(fig_r, use_container_width=True)
 
     with st.expander("📋 Full water-balance results", expanded=False):
         st.dataframe(wb_df, use_container_width=True, hide_index=True)
