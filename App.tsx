@@ -19,7 +19,10 @@ import {
   ArrowRightLeft,
   Pause,
   FastForward,
-  Sparkles
+  Sparkles,
+  HandMetal,
+  Waves,
+  Lightbulb
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Legend 
@@ -34,6 +37,8 @@ import HistoricalAnalysisModule from './components/analysis/HistoricalAnalysisMo
 import ClimateComparisonModule from './components/analysis/ClimateComparisonModule';
 import RoofHarvestVisualizer from './components/visuals/RoofHarvestVisualizer';
 import AIInsightsModule from './components/analysis/AIInsightsModule';
+import SynthesisSummary from './components/visuals/SynthesisSummary';
+import TankOptionCards from './components/visuals/TankOptionCards';
 
 const App: React.FC = () => {
   // State: Source Mode
@@ -64,16 +69,34 @@ const App: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
 
-  // State: Water Balance (Live)
-  const [wbConfig, setWbConfig] = useState<Omit<WaterBalanceConfig, 'tankCapacity'>>({
-    studentCount: 500,
-    dailyDemandPerStudent: 2
+  // State: Water Balance / Demand Configuration
+  const [demandConfig, setDemandConfig] = useState({
+    handWashingAreas: 4,
+    faucetsPerArea: 5,
+    litersPerFaucetDay: 50 // Standard engineering estimate for school faucet usage
   });
+
+  // Derived Total Daily Demand
+  const totalDailyDemand = useMemo(() => {
+    return demandConfig.handWashingAreas * demandConfig.faucetsPerArea * demandConfig.litersPerFaucetDay;
+  }, [demandConfig]);
 
   const [simulationResults, setSimulationResults] = useState<ReliabilityResult[]>([]);
   const [selectedTankSize, setSelectedTankSize] = useState(10000);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- HELPERS ---
+  const formatNumber = (val: number, decimals: number = 0) => {
+    return val.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+  };
+
+  const pluralize = (count: number, singular: string, plural: string) => {
+    return count === 1 ? singular : plural;
+  };
 
   // --- ACTIONS ---
 
@@ -105,6 +128,7 @@ const App: React.FC = () => {
     setTimeout(() => {
       const data = RainfallEngine.generate(activeParams, genYears, genSeed);
       setRainfallData(data);
+      setSimulationResults([]); // Clear results when rain changes
       setCurrentDayIndex(0);
       setIsGenerating(false);
     }, 600);
@@ -129,6 +153,10 @@ const App: React.FC = () => {
   const handleRunAnalysis = () => {
     if (rainfallData.length === 0) return;
     const inflowData = WaterBalanceEngine.calculateInflow(rainfallData, inflowConfig);
+    const wbConfig: Omit<WaterBalanceConfig, 'tankCapacity'> = {
+      ...demandConfig,
+      totalDailyDemand
+    };
     const scan = WaterBalanceEngine.scanTankSizes(inflowData, wbConfig, 1000, 50000, 25);
     setSimulationResults(scan);
   };
@@ -206,9 +234,9 @@ const App: React.FC = () => {
                 Report: {new Date(reportData.generated_at).toLocaleDateString()}
               </div>
               <div className="flex gap-6 text-sm text-slate-600">
-                <span><MapPin size={14} className="inline opacity-40 mr-1" /> {reportData.metadata.number_of_classrooms} Classrooms</span>
-                <span><TrendingUp size={14} className="inline opacity-40 mr-1" /> {reportData.metadata.roof_area_per_class_m2} m²</span>
-                <span className="font-medium text-primary">Demand: {reportData.metadata.demand_L_per_student_per_day} L/student</span>
+                <span><MapPin size={14} className="inline opacity-40 mr-1" /> {formatNumber(reportData.metadata.number_of_classrooms)} {pluralize(reportData.metadata.number_of_classrooms, 'Classroom', 'Classrooms')}</span>
+                <span><TrendingUp size={14} className="inline opacity-40 mr-1" /> {formatNumber(reportData.metadata.roof_area_per_class_m2)} m²</span>
+                <span className="font-medium text-primary">Daily Demand: {formatNumber(reportData.metadata.total_daily_demand_L)} L</span>
               </div>
             </div>
             <button onClick={() => setViewMode('live')} className="text-xs font-bold text-secondary hover:underline">
@@ -249,7 +277,7 @@ const App: React.FC = () => {
           <ModuleCard title="Rainfall Generation" icon={<CloudRain size={20}/>} step={2}>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Duration (Years)</label>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Duration ({pluralize(genYears, 'Year', 'Years')})</label>
                 <input 
                   type="number" 
                   className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" 
@@ -267,32 +295,91 @@ const App: React.FC = () => {
             </div>
           </ModuleCard>
 
-          <ModuleCard title="Infrastructure" icon={<Droplets size={20}/>} step={3}>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Classes</label>
-                  <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.numberOfClassrooms} onChange={(e) => setInflowConfig({...inflowConfig, numberOfClassrooms: parseInt(e.target.value)})} />
+          <ModuleCard title="Infrastructure & Demand" icon={<Droplets size={20}/>} step={3}>
+            <div className="space-y-6">
+              {/* Catchment Parameters */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-1">
+                  <TrendingUp size={14} className="text-primary opacity-50" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Catchment Area</span>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Roof/m²</label>
-                  <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.roofAreaPerClassroom} onChange={(e) => setInflowConfig({...inflowConfig, roofAreaPerClassroom: parseInt(e.target.value)})} />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">{pluralize(inflowConfig.numberOfClassrooms, 'Class', 'Classes')}</label>
+                    <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.numberOfClassrooms} onChange={(e) => setInflowConfig({...inflowConfig, numberOfClassrooms: parseInt(e.target.value)})} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Roof/m²</label>
+                    <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.roofAreaPerClassroom} onChange={(e) => setInflowConfig({...inflowConfig, roofAreaPerClassroom: parseInt(e.target.value)})} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Runoff Coeff.</label>
+                    <input type="number" step="0.01" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.runoffCoefficient} onChange={(e) => setInflowConfig({...inflowConfig, runoffCoefficient: parseFloat(e.target.value)})} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Gutter Eff.</label>
+                    <input type="number" step="0.01" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.gutterEfficiency} onChange={(e) => setInflowConfig({...inflowConfig, gutterEfficiency: parseFloat(e.target.value)})} />
+                  </div>
                 </div>
               </div>
-              <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Daily Demand (L/Student)</label>
-                <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={wbConfig.dailyDemandPerStudent} onChange={(e) => setWbConfig({...wbConfig, dailyDemandPerStudent: parseInt(e.target.value)})} />
+
+              {/* Demand Parameters */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-1">
+                  <HandMetal size={14} className="text-secondary opacity-50" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Water Demand</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Wash {pluralize(demandConfig.handWashingAreas, 'Area', 'Areas')}</label>
+                    <input 
+                      type="number" 
+                      className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-medium" 
+                      value={demandConfig.handWashingAreas} 
+                      onChange={(e) => setDemandConfig({...demandConfig, handWashingAreas: parseInt(e.target.value) || 0})} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">{pluralize(demandConfig.faucetsPerArea, 'Faucet', 'Faucets')} / Area</label>
+                    <input 
+                      type="number" 
+                      className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-medium" 
+                      value={demandConfig.faucetsPerArea} 
+                      onChange={(e) => setDemandConfig({...demandConfig, faucetsPerArea: parseInt(e.target.value) || 0})} 
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">L / {pluralize(1, 'Faucet', 'Faucet')} / Day</label>
+                  <input 
+                    type="number" 
+                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" 
+                    value={demandConfig.litersPerFaucetDay} 
+                    onChange={(e) => setDemandConfig({...demandConfig, litersPerFaucetDay: parseInt(e.target.value) || 0})} 
+                  />
+                </div>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Calculated Total</span>
+                  <span className="text-sm font-black text-secondary">{formatNumber(totalDailyDemand)} L / Day</span>
+                </div>
               </div>
-              <button onClick={handleRunAnalysis} disabled={viewMode === 'report' || rainfallData.length === 0} className="w-full bg-[#ca080b] text-white py-2 rounded-md font-medium disabled:bg-slate-300">
-                <BarChart3 size={16} className="inline mr-2" /> Run Water Balance
+
+              <button 
+                onClick={handleRunAnalysis} 
+                disabled={viewMode === 'report' || rainfallData.length === 0} 
+                className="w-full bg-[#010e5b] text-white py-2.5 rounded-lg font-bold shadow-md hover:bg-blue-900 transition-colors disabled:bg-slate-300 flex items-center justify-center gap-2"
+              >
+                <Waves size={18} /> Run Water Balance
               </button>
             </div>
           </ModuleCard>
 
-          {/* AI Insights Module in Sidebar for consistent layout */}
+          {/* AI Insights Module in Sidebar */}
           <AIInsightsModule 
             inflowConfig={inflowConfig}
-            wbConfig={wbConfig}
+            wbConfig={{ ...demandConfig, totalDailyDemand }}
             monthlySummary={viewMode === 'report' ? (processedReportData?.monthly || []) : liveChartData}
             reliabilityData={viewMode === 'report' ? (processedReportData?.reliability || []) : simulationResults}
             selectedTankSize={selectedTankSize}
@@ -301,7 +388,9 @@ const App: React.FC = () => {
 
         {/* Results Area */}
         <div className="lg:col-span-8 space-y-6">
-          {/* NEW VISUALIZER CARD */}
+          {/* Rainfall Summary Section */}
+          {rainfallData.length > 0 && <SynthesisSummary data={rainfallData} />}
+
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-slate-800">System Dynamic Visualization</h3>
@@ -335,13 +424,28 @@ const App: React.FC = () => {
 
             <div className="mt-4 flex items-center justify-between">
               <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                Simulation Day: <span className="text-slate-700">{currentDayIndex + 1} / {rainfallData.length}</span>
+                Simulation Day: <span className="text-slate-700">{formatNumber(currentDayIndex + 1)} / {formatNumber(rainfallData.length)} {pluralize(rainfallData.length, 'Day', 'Days')}</span>
               </div>
               <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                Year: <span className="text-slate-700">{currentDayData?.synthetic_year || 0}</span>
+                Year: <span className="text-slate-700">{formatNumber(currentDayData?.synthetic_year || 0)} {pluralize(currentDayData?.synthetic_year || 0, 'Year', 'Years')}</span>
               </div>
             </div>
           </div>
+
+          {/* Tank Advisable Options */}
+          {(simulationResults.length > 0 || (viewMode === 'report' && processedReportData?.reliability.length)) && (
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-700">
+               <div className="flex items-center gap-2 mb-4">
+                <Lightbulb size={18} className="text-primary" />
+                <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wide">Infrastructure Recommendations</h3>
+              </div>
+              <TankOptionCards 
+                results={viewMode === 'report' ? (processedReportData?.reliability || []) : simulationResults}
+                currentSelected={selectedTankSize}
+                onSelect={setSelectedTankSize}
+              />
+            </div>
+          )}
 
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-6">
@@ -352,7 +456,7 @@ const App: React.FC = () => {
               {currentReliability && (
                 <div className="text-right">
                   <div className="text-xs font-bold text-slate-400 uppercase">Current Reliability</div>
-                  <div className="text-2xl font-black text-secondary">{currentReliability.reliability.toFixed(1)}%</div>
+                  <div className="text-2xl font-black text-secondary">{formatNumber(currentReliability.reliability, 1)}%</div>
                 </div>
               )}
             </div>
@@ -396,7 +500,7 @@ const App: React.FC = () => {
                <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-primary"><Droplets size={20}/></div>
                <div>
                   <div className="text-[10px] font-bold text-slate-400 uppercase">Ann. Harvest</div>
-                  <div className="text-lg font-bold">{(viewMode === 'report' ? (processedReportData?.monthly.reduce((a,b) => a + b.avgInflow, 0) || 0)/1000 : (liveChartData.reduce((a,b) => a + b.avgInflow, 0)/1000)).toFixed(1)} m³</div>
+                  <div className="text-lg font-bold">{formatNumber((viewMode === 'report' ? (processedReportData?.monthly.reduce((a,b) => a + b.avgInflow, 0) || 0)/1000 : (liveChartData.reduce((a,b) => a + b.avgInflow, 0)/1000)), 1)} m³</div>
                </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
@@ -409,7 +513,7 @@ const App: React.FC = () => {
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
                <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Adjust Capacity</div>
                <input type="range" min="1000" max="50000" step="1000" className="w-full h-1 bg-slate-200 rounded-lg cursor-pointer accent-primary" value={selectedTankSize} onChange={(e) => setSelectedTankSize(parseInt(e.target.value))} />
-               <div className="text-[10px] text-primary font-bold text-right mt-1">{selectedTankSize/1000} kL</div>
+               <div className="text-[10px] text-primary font-bold text-right mt-1">{formatNumber(selectedTankSize/1000, 1)} kL</div>
             </div>
           </div>
         </div>

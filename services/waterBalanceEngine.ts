@@ -26,14 +26,14 @@ export class WaterBalanceEngine {
     let storage = wbConfig.tankCapacity * 0.5; // Start half full
     let daysMet = 0;
     let totalInflow = 0;
-    let totalDemand = 0;
+    let totalDemandValue = 0;
     let droughtDays = 0;
 
-    const dailyDemand = wbConfig.studentCount * wbConfig.dailyDemandPerStudent;
+    const dailyDemand = wbConfig.totalDailyDemand;
 
     inflowData.forEach(day => {
       totalInflow += day.inflow_liters;
-      totalDemand += dailyDemand;
+      totalDemandValue += dailyDemand;
 
       // Update storage
       storage = Math.min(wbConfig.tankCapacity, storage + day.inflow_liters);
@@ -53,7 +53,7 @@ export class WaterBalanceEngine {
       reliability: (daysMet / inflowData.length) * 100,
       droughtDays,
       totalInflow,
-      totalDemand
+      totalDemand: totalDemandValue
     };
   }
 

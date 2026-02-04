@@ -22,6 +22,13 @@ const RoofHarvestVisualizer: React.FC<Props> = ({
     return Math.max(0, rainIntensity * roofArea * efficiency);
   }, [rainIntensity, roofArea, efficiency]);
 
+  const formatNumber = (val: number, decimals: number = 0) => {
+    return val.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+  };
+
   // Determine rain particle count based on intensity
   const particleCount = Math.min(Math.ceil(rainIntensity * 5), 50);
   const rainColor = rainIntensity > 15 ? '#60a5fa' : '#93c5fd';
@@ -95,7 +102,7 @@ const RoofHarvestVisualizer: React.FC<Props> = ({
         </div>
         <div className="mt-1">
           <span className="text-xl font-black text-white tabular-nums">
-            {harvestedLiters.toFixed(1)}
+            {formatNumber(harvestedLiters, 1)}
           </span>
           <span className="ml-1 text-[10px] text-blue-300 font-bold uppercase">Liters / Day</span>
         </div>
@@ -114,11 +121,11 @@ const RoofHarvestVisualizer: React.FC<Props> = ({
         <div className="flex gap-4">
           <div className="text-center">
              <div className="text-[8px] text-slate-400 uppercase font-bold">Rainfall</div>
-             <div className="text-xs text-white font-mono">{rainIntensity.toFixed(1)} mm</div>
+             <div className="text-xs text-white font-mono">{formatNumber(rainIntensity, 1)} mm</div>
           </div>
           <div className="text-center border-l border-slate-700 pl-4">
              <div className="text-[8px] text-slate-400 uppercase font-bold">Roof Size</div>
-             <div className="text-xs text-white font-mono">{roofArea} m²</div>
+             <div className="text-xs text-white font-mono">{formatNumber(roofArea)} m²</div>
           </div>
         </div>
         

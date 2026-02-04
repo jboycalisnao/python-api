@@ -33,8 +33,10 @@ export interface InflowConfig {
 }
 
 export interface WaterBalanceConfig {
-  studentCount: number;
-  dailyDemandPerStudent: number; // Liters
+  handWashingAreas: number;
+  faucetsPerArea: number;
+  litersPerFaucetDay: number;
+  totalDailyDemand: number; // This is the derived total used by the engine
   tankCapacity: number; // Liters
 }
 
@@ -50,9 +52,10 @@ export interface SimulationReportJSON {
   metadata: {
     roof_area_per_class_m2: number;
     number_of_classrooms: number;
-    students_per_class: number;
-    demand_L_per_student_per_day: number;
+    total_daily_demand_L: number;
     simulation_years: number;
+    hand_washing_areas?: number;
+    faucets_per_area?: number;
   };
   harvest_summary: {
     annual_L: number;
