@@ -1,6 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { BrainCircuit, CheckCircle2, Key, Lightbulb, Loader2, Sparkles } from 'lucide-react';
+import { BrainCircuit, CheckCircle2, Key, Lightbulb, Loader2, Sparkles, AlertTriangle } from 'lucide-react';
 import React, { useState } from 'react';
 import { InflowConfig, MonthlySummary, ReliabilityResult, WaterBalanceConfig } from '../../types';
 
@@ -23,19 +23,32 @@ const AIInsightsModule: React.FC<Props> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleOpenKeySelector = async () => {
+  const triggerKeySelection = async () => {
     if ((window as any).aistudio?.openSelectKey) {
       await (window as any).aistudio.openSelectKey();
-      setError(null);
+      return true;
     }
+    return false;
   };
 
   const generateInsights = async () => {
     setLoading(true);
     setError(null);
+    
     try {
-      // Re-initialize right before call to ensure latest key is used.
-      // Using gemini-3-flash-preview for Tier 1 key compatibility.
+      // 1. Check if a key is selected (if in an environment that supports it)
+      if ((window as any).aistudio?.hasSelectedApiKey) {
+        const isKeySelected = await (window as any).aistudio.hasSelectedApiKey();
+        if (!isKeySelected) {
+          const triggered = await triggerKeySelection();
+          if (!triggered) {
+            console.warn("API Key selection utility not available.");
+          }
+          // Guidelines: Proceed immediately after trigger, do not wait.
+        }
+      }
+
+      // 2. Initialize SDK immediately before use to ensure it picks up the latest environment variables
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const prompt = `
@@ -56,11 +69,11 @@ const AIInsightsModule: React.FC<Props> = ({
 
         TASKS:
         1. Evaluate catchment sufficiency for the student population.
-        2. Identify the most critical drought window based on the monthly data.
-        3. Recommend an "Optimal Pivot Point" for tank sizing.
-        4. Provide one maintenance tip specific to this climate pattern.
+        2. Identify the most critical drought window.
+        3. Recommend an "Optimal Pivot Point" for tank sizing based on the reliability curve.
+        4. Provide one professional maintenance tip.
 
-        FORMAT: Use professional Markdown with bold headers. Limit to 200-250 words.
+        FORMAT: Use professional Markdown with bold headers. Use bullet points for recommendations. Keep it under 250 words.
       `;
 
       const response = await ai.models.generateContent({
@@ -71,17 +84,20 @@ const AIInsightsModule: React.FC<Props> = ({
       if (response.text) {
         setInsight(response.text);
       } else {
-        throw new Error("Empty response from AI engine.");
+        throw new Error("The AI engine returned an empty response.");
       }
     } catch (err: any) {
       console.error("AI Insights Error:", err);
       
-      if (err.message?.includes("Requested entity was not found")) {
-        setError("Model access error. Your API key might not have access to this specific model version.");
+      // Handle "Requested entity was not found" - usually means project/key mismatch
+      if (err.message?.includes("Requested entity was not found") || err.message?.includes("404")) {
+        setError("AI Engine project not linked correctly. Please select a valid project.");
+        await triggerKeySelection();
       } else if (err.message?.includes("API_KEY_INVALID")) {
-        setError("Invalid API Key. Please ensure you are using a valid key from Google AI Studio.");
+        setError("Invalid API Key. Please update your key in the project settings.");
+        await triggerKeySelection();
       } else {
-        setError("Connection failed. Ensure your API key is active and has project permissions.");
+        setError(err.message || "An unexpected error occurred while generating insights.");
       }
     } finally {
       setLoading(false);
@@ -112,13 +128,13 @@ const AIInsightsModule: React.FC<Props> = ({
             <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
             <div className="text-center">
               <p className="text-sm font-bold text-slate-700 animate-pulse">Running Neural Simulation...</p>
-              <p className="text-[10px] text-slate-400 mt-1">Generating report using Tier 1 optimized model.</p>
+              <p className="text-[10px] text-slate-400 mt-1">Analyzing climate patterns for harvesting optimization.</p>
             </div>
           </div>
         ) : error ? (
           <div className="py-8 flex flex-col items-center justify-center text-center">
             <div className="bg-red-50 text-red-600 p-3 rounded-full mb-3">
-              <BrainCircuit size={24} />
+              <AlertTriangle size={24} />
             </div>
             <p className="text-xs font-bold text-slate-700 mb-2">{error}</p>
             <div className="flex gap-4 mt-2">
@@ -129,11 +145,11 @@ const AIInsightsModule: React.FC<Props> = ({
                 Retry
               </button>
               <button 
-                onClick={handleOpenKeySelector}
+                onClick={triggerKeySelection}
                 className="text-xs font-bold text-slate-500 hover:text-slate-800 underline flex items-center gap-1"
               >
                 <Key size={12} />
-                Select Project
+                Link Project
               </button>
             </div>
             <a 
@@ -142,7 +158,7 @@ const AIInsightsModule: React.FC<Props> = ({
               rel="noopener noreferrer" 
               className="text-[9px] text-slate-400 mt-4 underline"
             >
-              Learn about model availability
+              Learn more about API access and billing
             </a>
           </div>
         ) : insight ? (
@@ -152,38 +168,46 @@ const AIInsightsModule: React.FC<Props> = ({
                 onClick={() => setInsight(null)} 
                 className="text-[10px] text-slate-400 font-bold hover:text-indigo-600 underline"
                >
-                Regenerate Report
+                Clear Report
                </button>
             </div>
-            <div className="text-xs text-slate-700 leading-relaxed space-y-4 whitespace-pre-wrap">
+            <div className="text-xs text-slate-700 leading-relaxed space-y-3 whitespace-pre-wrap">
               {insight.split('\n').map((line, i) => {
                 const cleanLine = line.replace(/[*#]/g, '').trim();
-                if (!cleanLine) return null;
-                const isHeader = line.startsWith('#') || (line.startsWith('**') && (line.endsWith('**') || line.includes(':')));
+                if (!cleanLine) return <div key={i} className="h-2" />;
+                
+                // Detection for headers or bold labels
+                const isHeader = line.startsWith('#') || line.startsWith('**') || line.includes(': ');
+                const isBullet = line.trim().startsWith('-') || line.trim().startsWith('*');
+                
                 return (
-                  <p key={i} className={isHeader ? 'font-bold text-indigo-900 border-b border-indigo-50 pb-1 mt-4 mb-2' : 'mb-2'}>
-                    {cleanLine}
+                  <p key={i} className={`
+                    ${isHeader ? 'font-bold text-indigo-900 mt-4' : ''} 
+                    ${isBullet ? 'pl-4 relative before:content-["•"] before:absolute before:left-0 before:text-indigo-400' : ''}
+                    mb-1
+                  `}>
+                    {cleanLine.replace(/^[-*]\s?/, '')}
                   </p>
                 );
               })}
             </div>
-            <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
+            <div className="mt-8 pt-4 border-t border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="flex items-center gap-1 text-[9px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
-                  <CheckCircle2 size={10} /> Tier 1 Active
+                <div className="flex items-center gap-1 text-[9px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">
+                  <CheckCircle2 size={10} /> Tier 1 Compatible
                 </div>
-                <div className="flex items-center gap-1 text-[9px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                  <Lightbulb size={10} /> Fast Synthesis
+                <div className="flex items-center gap-1 text-[9px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                  <Lightbulb size={10} /> Dynamic Synthesis
                 </div>
               </div>
               <span className="text-[9px] text-slate-300 italic">Gemini 3 Flash</span>
             </div>
           </div>
         ) : (
-          <div className="py-8 flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-slate-100 rounded-lg">
-            <BrainCircuit size={32} className="opacity-20 mb-3" />
-            <p className="text-xs font-medium px-8 text-center">
-              Run the Water Balance analysis first, then trigger the AI Synthesis.
+          <div className="py-12 flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-slate-100 rounded-lg">
+            <BrainCircuit size={40} className="opacity-10 mb-3" />
+            <p className="text-xs font-medium px-8 text-center text-slate-400">
+              Run the Water Balance analysis first, then trigger the AI Synthesis to generate recommendations.
             </p>
           </div>
         )}
