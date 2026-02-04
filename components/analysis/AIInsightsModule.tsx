@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Sparkles, BrainCircuit, Loader2, ChevronRight, CheckCircle2, AlertTriangle, Lightbulb } from 'lucide-react';
+import { Sparkles, BrainCircuit, Loader2, CheckCircle2, Lightbulb, Key } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { InflowConfig, WaterBalanceConfig, ReliabilityResult, MonthlySummary } from '../../types';
 
@@ -21,10 +21,30 @@ const AIInsightsModule: React.FC<Props> = ({
 }) => {
   const [insight, setInsight] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleOpenKeySelector = async () => {
+    if ((window as any).aistudio?.openSelectKey) {
+      await (window as any).aistudio.openSelectKey();
+      // After opening, the user can try generating insights again
+      setError(null);
+    }
+  };
 
   const generateInsights = async () => {
     setLoading(true);
+    setError(null);
     try {
+      // Check for key selection if required by environment
+      if ((window as any).aistudio?.hasSelectedApiKey) {
+        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+          await handleOpenKeySelector();
+          // We proceed anyway as per guidelines: assume success after trigger
+        }
+      }
+
+      // Re-initialize right before call to ensure latest key is used
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const prompt = `
@@ -55,13 +75,23 @@ const AIInsightsModule: React.FC<Props> = ({
 
       const response = await ai.models.generateContent({
         model: 'gemini-3-pro-preview',
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: prompt,
       });
 
-      setInsight(response.text || "No insights could be generated.");
-    } catch (err) {
-      console.error(err);
-      setInsight("Error connecting to AI Analysis engine. Please check system logs.");
+      if (response.text) {
+        setInsight(response.text);
+      } else {
+        throw new Error("Empty response from AI engine.");
+      }
+    } catch (err: any) {
+      console.error("AI Insights Error:", err);
+      
+      if (err.message?.includes("Requested entity was not found")) {
+        setError("API Key or Project not found. Please select a valid project with billing enabled.");
+        await handleOpenKeySelector();
+      } else {
+        setError("Connection failed. Ensure your API key is active and has project permissions.");
+      }
     } finally {
       setLoading(false);
     }
@@ -80,7 +110,7 @@ const AIInsightsModule: React.FC<Props> = ({
             className="text-[10px] font-bold bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-md transition-all border border-white/20 flex items-center gap-1"
           >
             <BrainCircuit size={12} />
-            Generate Insights
+            Generate
           </button>
         )}
       </div>
@@ -90,9 +120,31 @@ const AIInsightsModule: React.FC<Props> = ({
           <div className="py-12 flex flex-col items-center justify-center space-y-4">
             <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
             <div className="text-center">
-              <p className="text-sm font-bold text-slate-700 animate-pulse">Analyzing Hydrological Variance...</p>
-              <p className="text-[10px] text-slate-400 mt-1">Comparing semi-Markov intensities with school demand curves.</p>
+              <p className="text-sm font-bold text-slate-700 animate-pulse">Running Neural Simulation...</p>
+              <p className="text-[10px] text-slate-400 mt-1">Calculating optimal tank sizing for current climate regime.</p>
             </div>
+          </div>
+        ) : error ? (
+          <div className="py-8 flex flex-col items-center justify-center text-center">
+            <div className="bg-red-50 text-red-600 p-3 rounded-full mb-3">
+              <BrainCircuit size={24} />
+            </div>
+            <p className="text-xs font-bold text-slate-700 mb-2">{error}</p>
+            <button 
+              onClick={generateInsights}
+              className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline flex items-center gap-1"
+            >
+              <Key size={12} />
+              Try Again / Select Project
+            </button>
+            <a 
+              href="https://ai.google.dev/gemini-api/docs/billing" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-[9px] text-slate-400 mt-4 underline"
+            >
+              Documentation on API Billing & Project Selection
+            </a>
           </div>
         ) : insight ? (
           <div className="prose prose-sm max-w-none prose-slate">
@@ -104,30 +156,35 @@ const AIInsightsModule: React.FC<Props> = ({
                 Regenerate Report
                </button>
             </div>
-            <div className="text-xs text-slate-700 leading-relaxed space-y-4">
-              {insight.split('\n').map((line, i) => (
-                <p key={i} className={line.startsWith('#') ? 'font-bold text-indigo-900 border-b border-indigo-50 pb-1 mt-4' : ''}>
-                  {line.replace(/[*#]/g, '')}
-                </p>
-              ))}
+            <div className="text-xs text-slate-700 leading-relaxed space-y-4 whitespace-pre-wrap">
+              {insight.split('\n').map((line, i) => {
+                const cleanLine = line.replace(/[*#]/g, '').trim();
+                if (!cleanLine) return null;
+                const isHeader = line.startsWith('#') || (line.startsWith('**') && line.endsWith('**'));
+                return (
+                  <p key={i} className={isHeader ? 'font-bold text-indigo-900 border-b border-indigo-50 pb-1 mt-4 mb-2' : 'mb-2'}>
+                    {cleanLine}
+                  </p>
+                );
+              })}
             </div>
             <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-1 text-[9px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
-                  <CheckCircle2 size={10} /> Validated Model
+                  <CheckCircle2 size={10} /> Model Validated
                 </div>
                 <div className="flex items-center gap-1 text-[9px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                  <Lightbulb size={10} /> Site Specific
+                  <Lightbulb size={10} /> Local Synthesis
                 </div>
               </div>
-              <span className="text-[9px] text-slate-300 italic">Powered by Gemini 3 Pro</span>
+              <span className="text-[9px] text-slate-300 italic">Gemini 3 Pro</span>
             </div>
           </div>
         ) : (
           <div className="py-8 flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-slate-100 rounded-lg">
             <BrainCircuit size={32} className="opacity-20 mb-3" />
             <p className="text-xs font-medium px-8 text-center">
-              Configure your loop and run the water balance to enable AI-powered engineering insights.
+              Run the Water Balance analysis first, then trigger the AI Synthesis to generate engineering recommendations.
             </p>
           </div>
         )}
