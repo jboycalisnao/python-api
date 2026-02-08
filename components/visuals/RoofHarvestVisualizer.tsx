@@ -1,10 +1,11 @@
 
 import React, { useMemo } from 'react';
-import { Droplets, School, Waves } from 'lucide-react';
+import { Building } from '../../types';
 
 interface Props {
   rainIntensity: number; // mm
-  roofArea: number; // m2
+  buildings: Building[];
+  analysisScope: string;
   efficiency: number; // coeff * gutter
   currentMonth: string;
   isSimulating: boolean;
@@ -12,15 +13,17 @@ interface Props {
 
 const RoofHarvestVisualizer: React.FC<Props> = ({ 
   rainIntensity, 
-  roofArea, 
+  buildings, 
+  analysisScope,
   efficiency, 
   currentMonth,
   isSimulating 
 }) => {
-  // Calculate harvested liters for this specific roof
-  const harvestedLiters = useMemo(() => {
-    return Math.max(0, rainIntensity * roofArea * efficiency);
-  }, [rainIntensity, roofArea, efficiency]);
+  // Calculate harvested liters for the current visualization context
+  const totalHarvestedLiters = useMemo(() => {
+    const area = buildings.reduce((sum, b) => sum + (b.numberOfClassrooms * b.roofAreaPerClassroom), 0);
+    return Math.max(0, rainIntensity * area * efficiency);
+  }, [rainIntensity, buildings, efficiency]);
 
   const formatNumber = (val: number, decimals: number = 0) => {
     return val.toLocaleString(undefined, {
@@ -29,23 +32,177 @@ const RoofHarvestVisualizer: React.FC<Props> = ({
     });
   };
 
-  // Determine rain particle count based on intensity
-  const particleCount = Math.min(Math.ceil(rainIntensity * 5), 50);
-  const rainColor = rainIntensity > 15 ? '#60a5fa' : '#93c5fd';
+  // SVG Layout constants
+  const width = 800;
+  const height = 400;
+
+  // Render buildings in an aerial layout
+  const buildingLayouts = useMemo(() => {
+    const maxArea = Math.max(...buildings.map(b => b.numberOfClassrooms * b.roofAreaPerClassroom), 1);
+    
+    // Simple clustering logic: arrange in rows of 3
+    const spacingX = 220;
+    const spacingY = 140;
+    const startX = 60;
+    const startY = 80;
+
+    return buildings.map((b, i) => {
+      const bArea = b.numberOfClassrooms * b.roofAreaPerClassroom;
+      const scaleFactor = Math.sqrt(bArea / maxArea);
+      const bWidth = 140 * scaleFactor;
+      const bHeight = 90 * scaleFactor;
+      
+      const col = i % 3;
+      const row = Math.floor(i / 3);
+
+      return {
+        ...b,
+        x: startX + col * spacingX,
+        y: startY + row * spacingY,
+        width: bWidth,
+        height: bHeight,
+        area: bArea,
+        isSelected: analysisScope === 'school' || analysisScope === b.id
+      };
+    });
+  }, [buildings, analysisScope]);
 
   return (
-    <div className="relative bg-gradient-to-b from-slate-900 to-slate-800 rounded-xl overflow-hidden h-64 border border-slate-700 shadow-inner">
-      {/* Dynamic Rain Overlay */}
+    <div className="relative bg-slate-900 rounded-2xl overflow-hidden h-[420px] border border-slate-700 shadow-2xl group">
+      {/* Background Blueprint Grid */}
+      <div className="absolute inset-0 opacity-10 pointer-events-none" 
+           style={{ 
+             backgroundImage: 'linear-gradient(#3b82f6 0.5px, transparent 0.5px), linear-gradient(90deg, #3b82f6 0.5px, transparent 0.5px)', 
+             backgroundSize: '40px 40px' 
+           }} />
+      <div className="absolute inset-0 opacity-5 pointer-events-none" 
+           style={{ 
+             backgroundImage: 'linear-gradient(#3b82f6 0.5px, transparent 0.5px), linear-gradient(90deg, #3b82f6 0.5px, transparent 0.5px)', 
+             backgroundSize: '8px 8px' 
+           }} />
+
+      {/* SVG Visualization */}
+      <svg viewBox={`0 0 ${width} ${height}`} className="absolute inset-0 w-full h-full p-4 drop-shadow-2xl">
+        <defs>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+            <feMerge>
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <linearGradient id="pipeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.1" />
+            <stop offset="50%" stopColor="#60a5fa" stopOpacity="1" />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.1" />
+          </linearGradient>
+        </defs>
+
+        {/* Central Collection Tank (Hub) */}
+        <g transform={`translate(${width - 120}, ${height / 2 - 50})`}>
+          <rect width="70" height="100" rx="10" fill="#0f172a" stroke="#1e293b" strokeWidth="3" />
+          <text x="35" y="-12" textAnchor="middle" fill="#64748b" fontSize="8" fontWeight="900" className="uppercase tracking-[0.2em]">Main Reservoir</text>
+          
+          {/* Water Level inside tank */}
+          <rect 
+            x="3" 
+            y={3 + (94 - Math.min(totalHarvestedLiters / 30, 94))} 
+            width="64" 
+            height={Math.min(totalHarvestedLiters / 30, 94)} 
+            rx="6" 
+            fill="#3b82f6" 
+            className="transition-all duration-1000 ease-out"
+            filter="url(#glow)"
+          />
+        </g>
+
+        {/* Buildings and Collection Pipes */}
+        {buildingLayouts.map((b) => {
+          const pipeStartX = b.x + b.width;
+          const pipeStartY = b.y + b.height / 2;
+          const hubX = width - 120;
+          const hubY = height / 2;
+
+          return (
+            <g key={b.id} className={`transition-opacity duration-500 ${b.isSelected ? 'opacity-100' : 'opacity-10'}`}>
+              {/* Connection Pipe (Gutter to Hub) */}
+              <path 
+                d={`M ${pipeStartX} ${pipeStartY} L ${pipeStartX + 30} ${pipeStartY} L ${pipeStartX + 30} ${hubY} L ${hubX} ${hubY}`}
+                fill="none"
+                stroke="#1e293b"
+                strokeWidth="4"
+                strokeLinecap="round"
+              />
+              
+              {/* Flow Animation when raining */}
+              {rainIntensity > 0.1 && (
+                <path 
+                  d={`M ${pipeStartX} ${pipeStartY} L ${pipeStartX + 30} ${pipeStartY} L ${pipeStartX + 30} ${hubY} L ${hubX} ${hubY}`}
+                  fill="none"
+                  stroke="url(#pipeGradient)"
+                  strokeWidth="3"
+                  strokeDasharray="10, 25"
+                  className="animate-flow"
+                />
+              )}
+
+              {/* Building Shadow */}
+              <rect 
+                x={b.x + 4} y={b.y + 4} width={b.width} height={b.height} 
+                fill="black" opacity="0.2" rx="2"
+              />
+
+              {/* Roof Top View - Main Rect */}
+              <rect 
+                x={b.x} y={b.y} width={b.width} height={b.height} 
+                fill="#1e293b" stroke="#3b82f6" strokeWidth="1.5" rx="2"
+                className="transition-all duration-300"
+              />
+              
+              {/* Roof Ridges (Gives 3D pitched-roof look from top) */}
+              <g opacity="0.4" stroke="#334155" strokeWidth="1">
+                <line x1={b.x} y1={b.y} x2={b.x + b.width/2} y2={b.y + b.height/2} />
+                <line x1={b.x + b.width} y1={b.y} x2={b.x + b.width/2} y2={b.y + b.height/2} />
+                <line x1={b.x} y1={b.y + b.height} x2={b.x + b.width/2} y2={b.y + b.height/2} />
+                <line x1={b.x + b.width} y1={b.y + b.height} x2={b.x + b.width/2} y2={b.y + b.height/2} />
+              </g>
+
+              {/* Rain Splashes on Roof surface */}
+              {rainIntensity > 0.5 && Array.from({ length: 3 }).map((_, i) => (
+                <circle 
+                  key={i}
+                  cx={b.x + 10 + Math.random() * (b.width - 20)}
+                  cy={b.y + 10 + Math.random() * (b.height - 20)}
+                  r="0"
+                  fill="none"
+                  stroke="#60a5fa"
+                  strokeWidth="1"
+                  opacity="0.8"
+                >
+                  <animate attributeName="r" from="0" to="12" dur={`${0.4 + Math.random() * 0.4}s`} repeatCount="indefinite" />
+                  <animate attributeName="opacity" from="0.6" to="0" dur={`${0.4 + Math.random() * 0.4}s`} repeatCount="indefinite" />
+                </circle>
+              ))}
+
+              <text x={b.x} y={b.y - 8} fill="#3b82f6" fontSize="8" fontWeight="bold" className="uppercase tracking-widest">{b.name}</text>
+              <text x={b.x} y={b.y + b.height + 12} fill="#475569" fontSize="7" fontWeight="medium">{formatNumber(b.area)} m² catchment</text>
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* Falling Rain Particles Overlay */}
       {rainIntensity > 0 && (
-        <div className="absolute inset-0 pointer-events-none">
-          {Array.from({ length: particleCount }).map((_, i) => (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          {Array.from({ length: Math.min(Math.ceil(rainIntensity * 6), 60) }).map((_, i) => (
             <div 
               key={i}
-              className="absolute bg-blue-400/40 w-[1px] h-4 rounded-full"
+              className="absolute bg-blue-400/30 w-[1px] h-8 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]"
               style={{
                 left: `${Math.random() * 100}%`,
                 top: `-${Math.random() * 20}%`,
-                animation: `rain-fall ${0.5 + Math.random() * 0.5}s linear infinite`,
+                transform: 'rotate(10deg)',
+                animation: `rain-fall-physics ${0.2 + Math.random() * 0.3}s linear infinite`,
                 animationDelay: `${Math.random() * 2}s`
               }}
             />
@@ -53,95 +210,59 @@ const RoofHarvestVisualizer: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Classroom Schematic */}
-      <svg viewBox="0 0 400 200" className="absolute inset-0 w-full h-full p-4">
-        {/* Ground */}
-        <rect x="0" y="170" width="400" height="30" fill="#1e293b" />
-        
-        {/* Building Body */}
-        <rect x="100" y="100" width="180" height="70" fill="#334155" />
-        <rect x="120" y="120" width="30" height="30" fill="#1e293b" /> {/* Window */}
-        <rect x="175" y="120" width="30" height="30" fill="#1e293b" /> {/* Window */}
-        <rect x="230" y="120" width="30" height="30" fill="#1e293b" /> {/* Window */}
-        
-        {/* Roof Structure */}
-        <path d="M90 100 L190 60 L290 100 Z" fill="#475569" stroke="#1e293b" strokeWidth="2" />
-        
-        {/* Gutter System */}
-        <path d="M285 100 L295 100 L295 105 L285 105 Z" fill="#94a3b8" />
-        <rect x="290" y="105" width="4" height="60" fill="#94a3b8" /> {/* Downpipe */}
-
-        {/* Tank */}
-        <rect x="300" y="110" width="50" height="60" rx="4" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-        <rect 
-          x="302" 
-          y={112 + (60 - (Math.min(rainIntensity * 2, 56)))} 
-          width="46" 
-          height={Math.min(rainIntensity * 2, 56)} 
-          rx="2" 
-          fill="#3b82f6" 
-          className="transition-all duration-500 ease-in-out"
-        />
-
-        {/* Water Flow Animation (active when raining) */}
-        {rainIntensity > 0.1 && (
-          <g>
-            <rect x="291" y="105" width="2" height="60" fill="#3b82f6" className="animate-pulse" />
-            <circle cx="292" cy="110" r="1.5" fill="white">
-              <animate attributeName="cy" from="105" to="165" dur="0.4s" repeatCount="indefinite" />
-            </circle>
-          </g>
-        )}
-      </svg>
-
-      {/* UI Overlays */}
-      <div className="absolute top-4 left-4 bg-black/40 backdrop-blur-md border border-white/10 p-2 rounded-lg">
-        <div className="flex items-center gap-2 text-white">
-          <School size={16} className="text-blue-400" />
-          <span className="text-[10px] font-bold uppercase tracking-wider">Classroom Harvesting</span>
-        </div>
-        <div className="mt-1">
-          <span className="text-xl font-black text-white tabular-nums">
-            {formatNumber(harvestedLiters, 1)}
-          </span>
-          <span className="ml-1 text-[10px] text-blue-300 font-bold uppercase">Liters / Day</span>
-        </div>
-      </div>
-
-      <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-md border border-white/10 p-2 rounded-lg text-right">
-        <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">Current Pattern</div>
-        <div className="text-sm font-bold text-white uppercase italic">{currentMonth || 'Stationary'}</div>
-        <div className="flex items-center justify-end gap-1 text-[9px] text-blue-400 mt-1">
-          <Waves size={10} className="animate-bounce" />
-          <span>Non-Stationary Feed</span>
-        </div>
-      </div>
-
-      <div className="absolute bottom-4 left-4 right-4 flex justify-between items-end">
-        <div className="flex gap-4">
-          <div className="text-center">
-             <div className="text-[8px] text-slate-400 uppercase font-bold">Rainfall</div>
-             <div className="text-xs text-white font-mono">{formatNumber(rainIntensity, 1)} mm</div>
+      {/* Dashboard Overlays */}
+      <div className="absolute top-6 left-6 flex flex-col gap-4">
+        <div className="bg-slate-900/60 backdrop-blur-xl border border-white/5 p-5 rounded-2xl shadow-2xl">
+          <div className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em] mb-1">Catchment Status</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-4xl font-black text-white tabular-nums tracking-tighter">
+              {formatNumber(totalHarvestedLiters, 1)}
+            </span>
+            <span className="text-xs font-bold text-slate-500 uppercase">Liters / Tick</span>
           </div>
-          <div className="text-center border-l border-slate-700 pl-4">
-             <div className="text-[8px] text-slate-400 uppercase font-bold">Roof Size</div>
-             <div className="text-xs text-white font-mono">{formatNumber(roofArea)} m²</div>
+          
+          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-white/5 pt-4">
+            <div>
+              <div className="text-[8px] text-slate-500 font-bold uppercase">Rain Intensity</div>
+              <div className="text-xs text-white font-mono">{formatNumber(rainIntensity, 1)} mm</div>
+            </div>
+            <div>
+              <div className="text-[8px] text-slate-500 font-bold uppercase">Node Area</div>
+              <div className="text-xs text-white font-mono">{formatNumber(buildings.reduce((s,b)=>s+(b.numberOfClassrooms*b.roofAreaPerClassroom),0))} m²</div>
+            </div>
+            <div className="col-span-2 mt-1">
+              <div className="text-[8px] text-slate-500 font-bold uppercase">System Month</div>
+              <div className="text-[11px] text-blue-400 font-black uppercase tracking-widest">{currentMonth}</div>
+            </div>
           </div>
         </div>
-        
+
         {isSimulating && (
-          <div className="flex items-center gap-2 bg-red-500/20 text-red-400 px-2 py-1 rounded text-[10px] font-bold animate-pulse">
-            <div className="w-2 h-2 rounded-full bg-red-500" />
-            LIVE SIMULATION
+          <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 px-4 py-2 rounded-xl">
+            <div className="flex gap-1">
+              <span className="h-1 w-1 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></span>
+              <span className="h-1 w-1 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></span>
+              <span className="h-1 w-1 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></span>
+            </div>
+            <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Hydraulic Analysis Active</span>
           </div>
         )}
       </div>
 
       <style>{`
-        @keyframes rain-fall {
-          0% { transform: translateY(-20px); opacity: 0; }
-          20% { opacity: 1; }
-          100% { transform: translateY(220px); opacity: 0; }
+        @keyframes rain-fall-physics {
+          0% { transform: translateY(-50px) rotate(10deg); opacity: 0; }
+          10% { opacity: 0.6; }
+          90% { opacity: 0.6; }
+          100% { transform: translateY(500px) rotate(10deg); opacity: 0; }
+        }
+        .animate-flow {
+          stroke-dasharray: 10, 30;
+          animation: water-pulse 0.8s linear infinite;
+        }
+        @keyframes water-pulse {
+          from { stroke-dashoffset: 40; }
+          to { stroke-dashoffset: 0; }
         }
       `}</style>
     </div>

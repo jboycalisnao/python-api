@@ -7,8 +7,12 @@ export interface MonthlyParameters {
   stdDev: number; // Std dev for distribution
   gamma_k?: number; // Shape parameter
   gamma_theta?: number; // Scale parameter
-  avgDrySpell?: number; // Mean duration of dry spells (days)
-  avgWetSpell?: number; // Mean duration of wet spells (days)
+  meanDrySpell?: number; // Mean duration of dry spells (days)
+  varDrySpell?: number; // Variance of dry spells (days)
+  meanWetSpell?: number; // Mean duration of wet spells (days)
+  varWetSpell?: number; // Variance of wet spells (days)
+  avgDrySpell?: number; // Legacy/Alias for meanDrySpell
+  avgWetSpell?: number; // Legacy/Alias for meanWetSpell
 }
 
 export interface HistoricalRecord {
@@ -24,9 +28,15 @@ export interface RainfallDataRow {
   wet: boolean;
 }
 
-export interface InflowConfig {
-  roofAreaPerClassroom: number;
+export interface Building {
+  id: string;
+  name: string;
   numberOfClassrooms: number;
+  roofAreaPerClassroom: number;
+}
+
+export interface InflowConfig {
+  buildings: Building[];
   runoffCoefficient: number;
   gutterEfficiency: number;
   firstFlushLoss: number; // mm

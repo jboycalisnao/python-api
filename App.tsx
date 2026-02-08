@@ -10,7 +10,7 @@ import {
   Info,
   ChevronRight,
   Calculator,
-  Upload,
+  Upload, 
   FileJson,
   AlertCircle,
   TrendingUp,
@@ -22,7 +22,13 @@ import {
   Sparkles,
   HandMetal,
   Waves,
-  Lightbulb
+  Lightbulb,
+  Plus,
+  Trash2,
+  Building2,
+  Filter,
+  LayoutDashboard,
+  ChevronDown
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Legend 
@@ -30,8 +36,8 @@ import {
 
 import { RainfallEngine } from './services/rainfallEngine';
 import { WaterBalanceEngine } from './services/waterBalanceEngine';
-import { DEFAULT_MONTHLY_PARAMS, MONTH_NAMES } from './constants';
-import { RainfallDataRow, InflowConfig, WaterBalanceConfig, ReliabilityResult, SimulationReportJSON, MonthlySummary, MonthlyParameters } from './types';
+import { DEFAULT_MONTHLY_PARAMS, MONTH_NAMES, ALL_BRAND_CAPACITIES } from './constants';
+import { RainfallDataRow, InflowConfig, WaterBalanceConfig, ReliabilityResult, SimulationReportJSON, MonthlySummary, MonthlyParameters, Building } from './types';
 import ModuleCard from './components/ModuleCard';
 import HistoricalAnalysisModule from './components/analysis/HistoricalAnalysisModule';
 import ClimateComparisonModule from './components/analysis/ClimateComparisonModule';
@@ -39,6 +45,9 @@ import RoofHarvestVisualizer from './components/visuals/RoofHarvestVisualizer';
 import AIInsightsModule from './components/analysis/AIInsightsModule';
 import SynthesisSummary from './components/visuals/SynthesisSummary';
 import TankOptionCards from './components/visuals/TankOptionCards';
+import HarvestingAnalogies from './components/visuals/HarvestingAnalogies';
+import BuildingManager from './components/calibration/BuildingManager';
+import BrandMarketComparison from './components/visuals/BrandMarketComparison';
 
 const App: React.FC = () => {
   // State: Source Mode
@@ -57,33 +66,65 @@ const App: React.FC = () => {
 
   // State: Harvesting Config (Live)
   const [inflowConfig, setInflowConfig] = useState<InflowConfig>({
-    roofAreaPerClassroom: 60,
-    numberOfClassrooms: 10,
+    buildings: [
+      { id: '1', name: 'Main Wing', numberOfClassrooms: 10, roofAreaPerClassroom: 63 }
+    ],
     runoffCoefficient: 0.85,
     gutterEfficiency: 0.9,
     firstFlushLoss: 0.5
   });
 
-  // State: Simulation Playback
-  const [currentDayIndex, setCurrentDayIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const simulationTimerRef = useRef<number | null>(null);
+  // Simulation Scope Filtering
+  const [analysisScope, setAnalysisScope] = useState<'school' | string>('school');
+
+  // Derived Values
+  const totalClassrooms = useMemo(() => {
+    return inflowConfig.buildings.reduce((sum, b) => sum + b.numberOfClassrooms, 0);
+  }, [inflowConfig.buildings]);
+
+  // Scope-aware InflowConfig
+  const filteredInflowConfig = useMemo(() => {
+    if (analysisScope === 'school') return inflowConfig;
+    return {
+      ...inflowConfig,
+      buildings: inflowConfig.buildings.filter(b => b.id === analysisScope)
+    };
+  }, [inflowConfig, analysisScope]);
+
+  const totalRoofArea = useMemo(() => {
+    return filteredInflowConfig.buildings.reduce((sum, b) => sum + (b.numberOfClassrooms * b.roofAreaPerClassroom), 0);
+  }, [filteredInflowConfig]);
 
   // State: Water Balance / Demand Configuration
   const [demandConfig, setDemandConfig] = useState({
     handWashingAreas: 4,
     faucetsPerArea: 5,
-    litersPerFaucetDay: 50 // Standard engineering estimate for school faucet usage
+    litersPerFaucetDay: 50
   });
 
-  // Derived Total Daily Demand
-  const totalDailyDemand = useMemo(() => {
+  // Derived Total Daily Demand (Aggregate)
+  const aggregateDailyDemand = useMemo(() => {
     return demandConfig.handWashingAreas * demandConfig.faucetsPerArea * demandConfig.litersPerFaucetDay;
   }, [demandConfig]);
 
+  // Scope-aware Demand
+  const scopedDailyDemand = useMemo(() => {
+    if (analysisScope === 'school') return aggregateDailyDemand;
+    const building = inflowConfig.buildings.find(b => b.id === analysisScope);
+    if (!building) return aggregateDailyDemand;
+    // Distribute demand proportionally by room count
+    return (building.numberOfClassrooms / totalClassrooms) * aggregateDailyDemand;
+  }, [analysisScope, aggregateDailyDemand, totalClassrooms, inflowConfig.buildings]);
+
+  // Simulation Results
   const [simulationResults, setSimulationResults] = useState<ReliabilityResult[]>([]);
+  const [brandReliabilityMap, setBrandReliabilityMap] = useState<Record<number, number>>({});
   const [selectedTankSize, setSelectedTankSize] = useState(10000);
 
+  // Playback state
+  const [currentDayIndex, setCurrentDayIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const simulationTimerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- HELPERS ---
@@ -99,7 +140,6 @@ const App: React.FC = () => {
   };
 
   // --- ACTIONS ---
-
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -128,7 +168,8 @@ const App: React.FC = () => {
     setTimeout(() => {
       const data = RainfallEngine.generate(activeParams, genYears, genSeed);
       setRainfallData(data);
-      setSimulationResults([]); // Clear results when rain changes
+      setSimulationResults([]); 
+      setBrandReliabilityMap({});
       setCurrentDayIndex(0);
       setIsGenerating(false);
     }, 600);
@@ -150,19 +191,32 @@ const App: React.FC = () => {
     return () => { if (simulationTimerRef.current) clearInterval(simulationTimerRef.current); };
   }, [isPlaying, rainfallData]);
 
+  // Re-run analysis when scope or config changes
+  useEffect(() => {
+    if (rainfallData.length === 0) return;
+    handleRunAnalysis();
+  }, [analysisScope, inflowConfig, demandConfig]);
+
   const handleRunAnalysis = () => {
     if (rainfallData.length === 0) return;
-    const inflowData = WaterBalanceEngine.calculateInflow(rainfallData, inflowConfig);
+    const inflowData = WaterBalanceEngine.calculateInflow(rainfallData, filteredInflowConfig);
     const wbConfig: Omit<WaterBalanceConfig, 'tankCapacity'> = {
       ...demandConfig,
-      totalDailyDemand
+      totalDailyDemand: scopedDailyDemand
     };
+    
     const scan = WaterBalanceEngine.scanTankSizes(inflowData, wbConfig, 1000, 50000, 25);
     setSimulationResults(scan);
+
+    const brandResults: Record<number, number> = {};
+    ALL_BRAND_CAPACITIES.forEach(size => {
+      const result = WaterBalanceEngine.runSimulation(inflowData, { ...wbConfig, tankCapacity: size });
+      brandResults[size] = result.reliability;
+    });
+    setBrandReliabilityMap(brandResults);
   };
 
   // --- DATA PROCESSING ---
-
   const currentDayData = useMemo(() => {
     if (!rainfallData[currentDayIndex]) return null;
     return rainfallData[currentDayIndex];
@@ -182,13 +236,12 @@ const App: React.FC = () => {
       }))
       .sort((a, b) => a.tankSize - b.tankSize);
     const driestMonth = monthly.reduce((p, c) => p.avgInflow < c.avgInflow ? p : c);
-    const recommendedTank = reliability.find(r => r.reliability >= 90);
-    return { monthly, reliability, driestMonth, recommendedTank };
+    return { monthly, reliability, driestMonth };
   }, [reportData]);
 
   const liveChartData = useMemo(() => {
     if (rainfallData.length === 0) return [];
-    const inflowData = WaterBalanceEngine.calculateInflow(rainfallData, inflowConfig);
+    const inflowData = WaterBalanceEngine.calculateInflow(rainfallData, filteredInflowConfig);
     const summary = Array.from({ length: 12 }, (_, i) => ({ month: MONTH_NAMES[i], rainfall: 0, inflow: 0 }));
     inflowData.forEach(d => {
       const idx = d.month - 1;
@@ -196,14 +249,27 @@ const App: React.FC = () => {
       summary[idx].inflow += d.inflow_liters;
     });
     const years = rainfallData.length / 365;
-    return summary.map(s => ({ month: s.month, avgRain: parseFloat((s.rainfall / years).toFixed(2)), avgInflow: parseFloat((s.inflow / years).toFixed(2)) }));
-  }, [rainfallData, inflowConfig]);
+    return summary.map(s => ({ 
+      month: s.month, 
+      avgRain: parseFloat((s.rainfall / years).toFixed(2)), 
+      avgInflow: parseFloat((s.inflow / years).toFixed(2)) 
+    }));
+  }, [rainfallData, filteredInflowConfig]);
 
   const currentReliability = useMemo(() => {
     const list = viewMode === 'report' ? processedReportData?.reliability : simulationResults;
     if (!list || list.length === 0) return null;
     return list.reduce((prev, curr) => Math.abs(curr.tankSize - selectedTankSize) < Math.abs(prev.tankSize - selectedTankSize) ? curr : prev);
   }, [simulationResults, selectedTankSize, viewMode, processedReportData]);
+
+  const reliabilityMapForComparison = useMemo(() => {
+    if (viewMode === 'report' && processedReportData) {
+      const map: Record<number, number> = {};
+      processedReportData.reliability.forEach(r => map[r.tankSize] = r.reliability);
+      return map;
+    }
+    return brandReliabilityMap;
+  }, [viewMode, processedReportData, brandReliabilityMap]);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
@@ -297,35 +363,30 @@ const App: React.FC = () => {
 
           <ModuleCard title="Infrastructure & Demand" icon={<Droplets size={20}/>} step={3}>
             <div className="space-y-6">
-              {/* Catchment Parameters */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 border-b border-slate-100 pb-1">
-                  <TrendingUp size={14} className="text-primary opacity-50" />
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Catchment Area</span>
+              <BuildingManager config={inflowConfig} onChange={setInflowConfig} />
+
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Runoff Coeff.</label>
+                  <input type="number" step="0.01" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.runoffCoefficient} onChange={(e) => setInflowConfig({...inflowConfig, runoffCoefficient: parseFloat(e.target.value)})} />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">{pluralize(inflowConfig.numberOfClassrooms, 'Class', 'Classes')}</label>
-                    <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.numberOfClassrooms} onChange={(e) => setInflowConfig({...inflowConfig, numberOfClassrooms: parseInt(e.target.value)})} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Roof/m²</label>
-                    <input type="number" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.roofAreaPerClassroom} onChange={(e) => setInflowConfig({...inflowConfig, roofAreaPerClassroom: parseInt(e.target.value)})} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Runoff Coeff.</label>
-                    <input type="number" step="0.01" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.runoffCoefficient} onChange={(e) => setInflowConfig({...inflowConfig, runoffCoefficient: parseFloat(e.target.value)})} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Gutter Eff.</label>
-                    <input type="number" step="0.01" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.gutterEfficiency} onChange={(e) => setInflowConfig({...inflowConfig, gutterEfficiency: parseFloat(e.target.value)})} />
-                  </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Gutter Eff.</label>
+                  <input type="number" step="0.01" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" value={inflowConfig.gutterEfficiency} onChange={(e) => setInflowConfig({...inflowConfig, gutterEfficiency: parseFloat(e.target.value)})} />
                 </div>
               </div>
 
-              {/* Demand Parameters */}
+              <div className="bg-primary/5 p-3 rounded-lg border border-primary/10 flex items-center justify-between">
+                <div>
+                  <div className="text-[9px] font-bold text-slate-400 uppercase">Total School Catchment</div>
+                  <div className="text-sm font-black text-primary">{formatNumber(inflowConfig.buildings.reduce((s,b)=>s+(b.numberOfClassrooms*b.roofAreaPerClassroom),0))} m²</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[9px] font-bold text-slate-400 uppercase">Aggregate Rooms</div>
+                  <div className="text-sm font-black text-primary">{formatNumber(totalClassrooms)}</div>
+                </div>
+              </div>
+
               <div className="space-y-3">
                 <div className="flex items-center gap-2 border-b border-slate-100 pb-1">
                   <HandMetal size={14} className="text-secondary opacity-50" />
@@ -361,8 +422,8 @@ const App: React.FC = () => {
                   />
                 </div>
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Calculated Total</span>
-                  <span className="text-sm font-black text-secondary">{formatNumber(totalDailyDemand)} L / Day</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">School Total</span>
+                  <span className="text-sm font-black text-secondary">{formatNumber(aggregateDailyDemand)} L / Day</span>
                 </div>
               </div>
 
@@ -376,10 +437,9 @@ const App: React.FC = () => {
             </div>
           </ModuleCard>
 
-          {/* AI Insights Module in Sidebar */}
           <AIInsightsModule 
-            inflowConfig={inflowConfig}
-            wbConfig={{ ...demandConfig, totalDailyDemand }}
+            inflowConfig={filteredInflowConfig}
+            wbConfig={{ ...demandConfig, totalDailyDemand: scopedDailyDemand }}
             monthlySummary={viewMode === 'report' ? (processedReportData?.monthly || []) : liveChartData}
             reliabilityData={viewMode === 'report' ? (processedReportData?.reliability || []) : simulationResults}
             selectedTankSize={selectedTankSize}
@@ -388,12 +448,56 @@ const App: React.FC = () => {
 
         {/* Results Area */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Rainfall Summary Section */}
-          {rainfallData.length > 0 && <SynthesisSummary data={rainfallData} />}
+          {/* Simulation Scope Filter Dropdown */}
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between shadow-sm sticky top-[72px] z-40">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-primary/5 rounded-lg text-primary">
+                <Filter size={18} />
+              </div>
+              <div>
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Analysis Scope</h4>
+                <p className="text-[11px] text-slate-600 font-medium">Select target for results display</p>
+              </div>
+            </div>
+
+            <div className="relative min-w-[200px]">
+              <select 
+                value={analysisScope}
+                onChange={(e) => setAnalysisScope(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold py-2.5 pl-4 pr-10 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+              >
+                <option value="school">🏫 Whole School (Aggregate)</option>
+                <optgroup label="Individual Buildings">
+                  {inflowConfig.buildings.map(b => (
+                    <option key={b.id} value={b.id}>🏢 {b.name}</option>
+                  ))}
+                </optgroup>
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                <ChevronDown size={16} />
+              </div>
+            </div>
+          </div>
+
+          {rainfallData.length > 0 && (
+            <>
+              <SynthesisSummary data={rainfallData} />
+              <HarvestingAnalogies 
+                rainfallData={rainfallData} 
+                inflowConfig={filteredInflowConfig} 
+                dailyDemand={scopedDailyDemand} 
+              />
+            </>
+          )}
 
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-slate-800">System Dynamic Visualization</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-slate-800">Dynamic Visualization</h3>
+                <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full uppercase border border-blue-100 flex items-center gap-1">
+                   {analysisScope === 'school' ? 'Consolidated' : `Target: ${inflowConfig.buildings.find(b=>b.id===analysisScope)?.name}`}
+                </span>
+              </div>
               <div className="flex gap-2">
                 <button 
                   onClick={togglePlayback}
@@ -416,7 +520,8 @@ const App: React.FC = () => {
             
             <RoofHarvestVisualizer 
               rainIntensity={currentDayData?.rain_mm || 0}
-              roofArea={inflowConfig.roofAreaPerClassroom}
+              buildings={filteredInflowConfig.buildings}
+              analysisScope={analysisScope}
               efficiency={inflowConfig.runoffCoefficient * inflowConfig.gutterEfficiency}
               currentMonth={currentDayData ? MONTH_NAMES[currentDayData.month-1] : 'No Loop Active'}
               isSimulating={isPlaying}
@@ -424,25 +529,33 @@ const App: React.FC = () => {
 
             <div className="mt-4 flex items-center justify-between">
               <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                Simulation Day: <span className="text-slate-700">{formatNumber(currentDayIndex + 1)} / {formatNumber(rainfallData.length)} {pluralize(rainfallData.length, 'Day', 'Days')}</span>
+                Simulation Day: <span className="text-slate-700">{formatNumber(currentDayIndex + 1)} / {formatNumber(rainfallData.length)}</span>
               </div>
               <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                Year: <span className="text-slate-700">{formatNumber(currentDayData?.synthetic_year || 0)} {pluralize(currentDayData?.synthetic_year || 0, 'Year', 'Years')}</span>
+                Year: <span className="text-slate-700">{formatNumber(currentDayData?.synthetic_year || 0)}</span>
               </div>
             </div>
           </div>
 
-          {/* Tank Advisable Options */}
           {(simulationResults.length > 0 || (viewMode === 'report' && processedReportData?.reliability.length)) && (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-700">
-               <div className="flex items-center gap-2 mb-4">
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-700 space-y-6">
+               <div className="flex items-center gap-2 mb-2">
                 <Lightbulb size={18} className="text-primary" />
-                <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wide">Infrastructure Recommendations</h3>
+                <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wide">
+                  {analysisScope === 'school' ? 'Consolidated Recommendations' : 'Building-Specific Recommendations'}
+                </h3>
               </div>
               <TankOptionCards 
                 results={viewMode === 'report' ? (processedReportData?.reliability || []) : simulationResults}
                 currentSelected={selectedTankSize}
                 onSelect={setSelectedTankSize}
+                buildings={inflowConfig.buildings}
+                hideBreakdown={analysisScope !== 'school'}
+              />
+              <BrandMarketComparison 
+                reliabilityMap={reliabilityMapForComparison}
+                onSelect={setSelectedTankSize}
+                selectedSize={selectedTankSize}
               />
             </div>
           )}
@@ -450,12 +563,14 @@ const App: React.FC = () => {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="text-xl font-bold text-slate-800">{viewMode === 'report' ? 'Static Report View' : 'Live Hydrograph'}</h3>
-                <p className="text-xs text-slate-500">Visualizing climate patterns and harvesting performance.</p>
+                <h3 className="text-xl font-bold text-slate-800">{viewMode === 'report' ? 'Static Report' : 'Current Scope Hydrograph'}</h3>
+                <p className="text-xs text-slate-500">
+                  {analysisScope === 'school' ? 'Visualizing school-wide potential.' : `Focused on ${inflowConfig.buildings.find(b=>b.id===analysisScope)?.name}.`}
+                </p>
               </div>
               {currentReliability && (
                 <div className="text-right">
-                  <div className="text-xs font-bold text-slate-400 uppercase">Current Reliability</div>
+                  <div className="text-xs font-bold text-slate-400 uppercase">Projected Reliability</div>
                   <div className="text-2xl font-black text-secondary">{formatNumber(currentReliability.reliability, 1)}%</div>
                 </div>
               )}
@@ -481,7 +596,7 @@ const App: React.FC = () => {
 
             {(simulationResults.length > 0 || (viewMode === 'report' && processedReportData?.reliability.length)) && (
               <div className="h-64 mt-10 pt-10 border-t border-slate-100">
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-4 tracking-widest">Reliability Scan (Liters vs %)</h4>
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-4 tracking-widest">Reliability Curve for {analysisScope === 'school' ? 'School' : 'Selected Building'}</h4>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={viewMode === 'report' ? processedReportData?.reliability : simulationResults}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -499,19 +614,19 @@ const App: React.FC = () => {
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
                <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-primary"><Droplets size={20}/></div>
                <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase">Ann. Harvest</div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">Avg Ann. Inflow</div>
                   <div className="text-lg font-bold">{formatNumber((viewMode === 'report' ? (processedReportData?.monthly.reduce((a,b) => a + b.avgInflow, 0) || 0)/1000 : (liveChartData.reduce((a,b) => a + b.avgInflow, 0)/1000)), 1)} m³</div>
                </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
                <div className="w-10 h-10 bg-red-50 rounded-lg flex items-center justify-center text-secondary"><AlertCircle size={20}/></div>
                <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase">Driest Month</div>
-                  <div className="text-lg font-bold">{processedReportData?.driestMonth.month || liveChartData.reduce((p, c) => p.avgInflow < c.avgInflow ? p : c, {month: '...', avgInflow: Infinity}).month}</div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">Daily Usage</div>
+                  <div className="text-lg font-bold">{formatNumber(scopedDailyDemand)} L</div>
                </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
-               <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Adjust Capacity</div>
+               <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Local Capacity</div>
                <input type="range" min="1000" max="50000" step="1000" className="w-full h-1 bg-slate-200 rounded-lg cursor-pointer accent-primary" value={selectedTankSize} onChange={(e) => setSelectedTankSize(parseInt(e.target.value))} />
                <div className="text-[10px] text-primary font-bold text-right mt-1">{formatNumber(selectedTankSize/1000, 1)} kL</div>
             </div>

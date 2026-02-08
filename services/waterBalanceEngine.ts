@@ -3,7 +3,11 @@ import { RainfallDataRow, InflowConfig, WaterBalanceConfig, ReliabilityResult } 
 
 export class WaterBalanceEngine {
   static calculateInflow(rainData: RainfallDataRow[], config: InflowConfig): (RainfallDataRow & { inflow_liters: number })[] {
-    const totalRoofArea = config.roofAreaPerClassroom * config.numberOfClassrooms;
+    // Aggregate total roof area across all buildings
+    const totalRoofArea = config.buildings.reduce(
+      (sum, b) => sum + (b.numberOfClassrooms * b.roofAreaPerClassroom), 
+      0
+    );
     
     return rainData.map(day => {
       // First flush loss (applied per rainy day)
